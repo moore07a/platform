@@ -1,0 +1,297 @@
+/* Main Styles */
+:root {
+    --primary-color: #28a745;
+    --secondary-color: #6c757d;
+    --success-color: #28a745;
+    --danger-color: #dc3545;
+    --warning-color: #ffc107;
+    --info-color: #17a2b8;
+    --light-color: #f8f9fa;
+    --dark-color: #343a40;
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #f5f5f5;
+    padding-top: 20px;
+}
+
+/* Card Styles */
+.card {
+    border-radius: 10px;
+    border: none;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    margin-bottom: 20px;
+}
+
+.card-header {
+    border-radius: 10px 10px 0 0 !important;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+}
+
+/* Table Styles */
+.table th {
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+    background-color: rgba(40, 167, 69, 0.05);
+}
+
+/* Button Styles */
+.btn-primary {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+.btn-primary:hover {
+    background-color: #218838;
+    border-color: #1e7e34;
+}
+
+.btn-success {
+    background-color: var(--success-color);
+    border-color: var(--success-color);
+}
+
+/* Form Styles */
+.form-control:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
+}
+
+.form-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 0.2rem rgba(40, 167, 69, 0.25);
+}
+
+/* Sidebar Styles */
+.sidebar {
+    background-color: white;
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+}
+
+.sidebar .list-group-item {
+    border: none;
+    border-radius: 5px;
+    margin-bottom: 5px;
+    transition: all 0.3s;
+}
+
+.sidebar .list-group-item:hover {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.sidebar .list-group-item.active {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+}
+
+/* Dashboard Cards */
+.dashboard-card {
+    transition: transform 0.3s;
+}
+
+.dashboard-card:hover {
+    transform: translateY(-5px);
+}
+
+/* Stock Summary Cards */
+.stock-card {
+    transition: transform 0.2s;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.stock-card:hover {
+    transform: translateY(-5px);
+}
+
+.stock-card .card-body {
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: 0.25rem;
+    padding: 0.65rem 0.8rem;
+    height: 100%;
+}
+
+.stock-card .card-title {
+    margin-bottom: 0.1rem;
+    font-size: 1rem;
+}
+
+.stock-card .display-6 {
+    font-size: 1.9rem;
+    line-height: 1.1;
+}
+
+.poultry-stock-summary {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    min-height: 60px;
+    padding-top: 6px;
+}
+
+/* Stock Status Indicators */
+.stock-low {
+    color: var(--danger-color);
+    font-weight: bold;
+}
+
+.stock-adequate {
+    color: var(--success-color);
+    font-weight: bold;
+}
+
+.stock-moderate {
+    color: var(--warning-color);
+    font-weight: bold;
+}
+
+/* Calendar Styles */
+.calendar-day {
+    min-height: 96px;
+    background: #ffffff;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.calendar-day:hover {
+    background-color: rgba(40, 167, 69, 0.08);
+    border-color: #cbd5e1;
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+    transform: translateY(-2px);
+}
+
+.calendar-day .calendar-date {
+    color: #1e293b;
+    font-size: 1rem;
+    font-weight: 700;
+}
+
+.calendar-day .calendar-meta {
+    color: #64748b;
+    font-size: 0.78rem;
+}
+
+.calendar-day.has-record {
+    background-color: rgba(40, 167, 69, 0.12);
+    border-color: var(--success-color) !important;
+}
+
+.calendar-day.has-mortality {
+    background-color: rgba(220, 53, 69, 0.12);
+    border-color: var(--danger-color) !important;
+}
+
+.calendar-day.no-action {
+    cursor: default;
+    opacity: 0.75;
+}
+
+.calendar-weekday {
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.calendar-legacy .calendar-day.has-record {
+    background: #dff6f9 !important;
+}
+
+.calendar-legacy .calendar-day.has-mortality {
+    background: #f8dfe2 !important;
+    box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.12);
+}
+
+.record-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.record-card:hover {
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+/* Progress Bars */
+.progress {
+    border-radius: 10px;
+}
+
+.progress-bar {
+    border-radius: 10px;
+}
+
+/* Alert Styles */
+.alert {
+    border-radius: 10px;
+    border: none;
+}
+
+/* Print Styles */
+@media print {
+    .no-print {
+        display: none !important;
+    }
+    
+    .card {
+        box-shadow: none !important;
+        border: 1px solid #dee2e6 !important;
+    }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+    .container-fluid {
+        padding-left: 10px;
+        padding-right: 10px;
+    }
+    
+    .card-body {
+        padding: 15px;
+    }
+    
+    .table-responsive {
+        font-size: 14px;
+    }
+}
+
+/* Animation for Alerts */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.alert {
+    animation: fadeIn 0.3s ease-out;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--primary-color);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: #218838;
+}

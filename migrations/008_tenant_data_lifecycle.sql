@@ -1,0 +1,10 @@
+-- Tenant lifecycle guarantees for the shared SaaS database.
+-- Every business table belongs to exactly one farm through farm_id. Do not create
+-- a database per farm: application queries must always include the current farm_id.
+-- Existing 003_multi_tenant_saas.sql installations use RESTRICT foreign keys, so
+-- management/farms.php deletes dependent data in FK-safe order before deleting a farm.
+--
+-- This migration intentionally contains no runtime audit SELECT. On large hosted
+-- databases, COUNT(*) audits can make the migration runner appear stuck before
+-- later schema-fix migrations are reached. Use application-level tenant-scoped
+-- queries and explicit farm cleanup guarantees instead.
