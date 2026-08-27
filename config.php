@@ -137,6 +137,46 @@ function farmHasModule(string $module): bool {
     return in_array($module, $modules, true);
 }
 
+/** Farm types enabled by the platform owner for the current farm. */
+function enabledFarmTypes(): array {
+    return array_values(array_filter(['poultry', 'ruminant'], static function (string $type): bool {
+        return farmHasModule($type);
+    }));
+}
+
+/**
+ * Values that may be stored in a Farm Type field. "Both" is meaningful only
+ * when the farm is entitled to both livestock modules.
+ */
+function allowedFarmTypes(bool $includeBoth = true): array {
+    $types = enabledFarmTypes();
+    if ($includeBoth && count($types) === 2) $types[] = 'both';
+    return $types;
+}
+
+/**
+ * Sales can have a durable neutral classification independent of livestock
+ * module entitlements. Keep it available whenever the sales module is enabled
+ * so existing general records remain visible and editable after module changes.
+ */
+function allowedSalesFarmTypes(): array {
+    $types = allowedFarmTypes(false);
+    if (farmHasModule('sales')) $types[] = 'general';
+    return $types;
+}
+
+/** Constrain a URL/form farm type to the current farm's subscriptions. */
+function normalizeFarmType(?string $farmType, bool $allowAll = false, bool $includeBoth = true, bool $fallback = true): string {
+    $allowed = allowedFarmTypes($includeBoth);
+    if ($allowAll && count(enabledFarmTypes()) === 2) array_unshift($allowed, 'all');
+    if ($farmType !== null && in_array($farmType, $allowed, true)) return $farmType;
+    if (!$fallback) return '';
+    // No enabled livestock module means there is no safe report scope. In
+    // particular, never turn an empty entitlement set into the unrestricted
+    // "all" filter, even for roles that normally choose their own filter.
+    return $allowed[0] ?? '';
+}
+
 function requirePlatformOwner(): void {
     if (!isPlatformOwner()) { http_response_code(403); exit('Owner / Developer access required.'); }
 }

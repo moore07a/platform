@@ -12,7 +12,14 @@ $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 $reportMode = $_GET['report_mode'] ?? 'monthly';
 $month = $_GET['month'] ?? date('Y-m');
 $year = $_GET['year'] ?? date('Y');
-$farmType = $canChooseFarmType ? ($_GET['farm_type'] ?? 'all') : $userFarmType;
+$requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
+// getUserFarmType() represents dual-module viewer access as "both", while
+// reports represent that same authorized combined scope as "all".
+if (!$canChooseFarmType && $requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
+$farmType = normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
+$visibleFarmTypes = $farmType === 'all' ? enabledFarmTypes() : [$farmType];
 
 if ($reportMode === 'yearly') {
     $year = date('Y', strtotime($year . '-01-01'));
@@ -27,12 +34,12 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($startDate));
 }
 
-$farmFilterSql = '';
+$farmFilterSql = $farmType === '' ? ' AND 1 = 0' : '';
 $farmParams = [];
 if ($farmType === 'poultry') {
-    $farmFilterSql = " AND farm_type = 'poultry'";
+    $farmFilterSql = " AND farm_type IN ('poultry', 'general')";
 } elseif ($farmType === 'ruminant') {
-    $farmFilterSql = " AND farm_type = 'ruminant'";
+    $farmFilterSql = " AND farm_type IN ('ruminant', 'general')";
 }
 
 $salesStmt = $pdo->prepare("SELECT farm_type, SUM(total_amount) AS total_sales
@@ -41,14 +48,18 @@ $salesStmt = $pdo->prepare("SELECT farm_type, SUM(total_amount) AS total_sales
                            GROUP BY farm_type");
 $salesStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $salesSummary = $salesStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+if ($farmType !== 'all' && isset($salesSummary['general'])) {
+    $salesSummary[$farmType] = (float)($salesSummary[$farmType] ?? 0) + (float)$salesSummary['general'];
+    unset($salesSummary['general']);
+}
 
 $expenseStmt = $pdo->prepare("SELECT farm_type, SUM(amount * unit) AS total_expenses
                               FROM farm_expenses
                               WHERE farm_id = ? AND expense_date BETWEEN ? AND ?" .
-                              ($farmType === 'all' ? '' : " AND (farm_type = ? OR farm_type = 'both')") .
+                              ($farmType === '' ? ' AND 1 = 0' : ($farmType === 'all' ? '' : " AND (farm_type = ? OR farm_type = 'both')")) .
                               " GROUP BY farm_type");
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
-if ($farmType !== 'all') {
+if ($farmType !== '' && $farmType !== 'all') {
     $expenseParams[] = $farmType;
 }
 $expenseStmt->execute($expenseParams);
@@ -146,9 +157,8 @@ foreach ($stockRows as $row) {
             <div class="d-flex gap-2 report-controls">
                 <select class="form-select" id="farmTypeFilter" style="width: 150px;">
                     <?php if ($canChooseFarmType): ?>
-                        <option value="all" <?php echo $farmType === 'all' ? 'selected' : ''; ?>>All Farms</option>
-                        <option value="poultry" <?php echo $farmType === 'poultry' ? 'selected' : ''; ?>>Poultry</option>
-                        <option value="ruminant" <?php echo $farmType === 'ruminant' ? 'selected' : ''; ?>>Ruminant</option>
+                        <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType === 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                        <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                     <?php else: ?>
                         <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?></option>
                     <?php endif; ?>
@@ -168,24 +178,31 @@ foreach ($stockRows as $row) {
         </div>
         <div class="card-body">
             <div class="row g-3 mb-3">
+                <?php if (in_array('poultry', $visibleFarmTypes, true)): ?>
                 <div class="col-md-6"><div class="card border-info"><div class="card-body"><h6>Poultry Sales</h6><h3>₦<?php echo number_format($salesSummary['poultry'] ?? 0, 2); ?></h3></div></div></div>
-                <div class="col-md-6"><div class="card border-warning"><div class="card-body"><h6>Ruminant Sales</h6><h3>₦<?php echo number_format($salesSummary['ruminant'] ?? 0, 2); ?></h3></div></div></div>
                 <div class="col-md-6"><div class="card border-danger"><div class="card-body"><h6>Poultry Expenses</h6><h3>₦<?php echo number_format($expenseSummary['poultry'] ?? 0, 2); ?></h3></div></div></div>
+                <?php endif; ?>
+                <?php if (in_array('ruminant', $visibleFarmTypes, true)): ?>
+                <div class="col-md-6"><div class="card border-warning"><div class="card-body"><h6>Ruminant Sales</h6><h3>₦<?php echo number_format($salesSummary['ruminant'] ?? 0, 2); ?></h3></div></div></div>
                 <div class="col-md-6"><div class="card border-danger"><div class="card-body"><h6>Ruminant Expenses</h6><h3>₦<?php echo number_format($expenseSummary['ruminant'] ?? 0, 2); ?></h3></div></div></div>
+                <?php endif; ?>
+                <?php if ($farmType === 'all' && isset($salesSummary['general'])): ?>
+                <div class="col-md-6"><div class="card border-success"><div class="card-body"><h6>General Sales</h6><h3>₦<?php echo number_format($salesSummary['general'], 2); ?></h3></div></div></div>
+                <?php endif; ?>
             </div>
             <div class="table-responsive">
                 <table class="table table-bordered">
                     <thead class="table-dark"><tr><th>Section</th><th>Opening Stock</th><th>Mortality</th><th>Closing Stock</th><th>Feeds Consumed</th><th>Eggs Laid</th><th>Stock Items</th><th>Stock Value</th></tr></thead>
                     <tbody>
-                        <tr>
+                        <?php if (in_array('poultry', $visibleFarmTypes, true)): ?><tr>
                             <td>Layers</td><td><?php echo $layerOpeningStock; ?></td><td><?php echo $layerMortality; ?></td><td><?php echo $layerClosingStock; ?></td><td><?php echo number_format((float)($layer['feed'] ?? 0), 2); ?> bags</td><td><?php echo (int)($layer['eggs'] ?? 0); ?></td><td><?php echo $stockSummary['poultry']['items']; ?></td><td>₦<?php echo number_format($stockSummary['poultry']['stock_value'], 2); ?></td>
                         </tr>
                         <tr>
                             <td>Broilers</td><td><?php echo $broilerOpeningStock; ?></td><td><?php echo $broilerMortality; ?></td><td><?php echo $broilerClosingStock; ?></td><td><?php echo number_format((float)($broiler['feed'] ?? 0), 2); ?> bags</td><td>N/A</td><td><?php echo $stockSummary['poultry']['items']; ?></td><td>₦<?php echo number_format($stockSummary['poultry']['stock_value'], 2); ?></td>
-                        </tr>
-                        <tr>
+                        </tr><?php endif; ?>
+                        <?php if (in_array('ruminant', $visibleFarmTypes, true)): ?><tr>
                             <td>Ruminants</td><td><?php echo $ruminantOpeningStock; ?></td><td><?php echo $ruminantMortality; ?></td><td><?php echo $ruminantClosingStock; ?></td><td><?php echo number_format((float)($ruminant['feed'] ?? 0), 2); ?> kg</td><td>N/A</td><td><?php echo $stockSummary['ruminant']['items']; ?></td><td>₦<?php echo number_format($stockSummary['ruminant']['stock_value'], 2); ?></td>
-                        </tr>
+                        </tr><?php endif; ?>
                     </tbody>
                 </table>
             </div>

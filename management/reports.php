@@ -10,7 +10,21 @@ $userFarmType = getUserFarmType();
 $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 
 $year = $_GET['year'] ?? date('Y');
-$farmType = $canChooseFarmType ? ($_GET['farm_type'] ?? 'all') : $userFarmType;
+$requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
+// User access represents a dual-module assignment as "both", while report
+// filters represent the same combined read scope as "all".
+if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
+
+// Sales-only farms have no livestock scope to normalize, but their neutral
+// general sales must remain available to the analytics dashboard and export.
+$salesOnlyScope = enabledFarmTypes() === []
+    && farmHasModule('sales')
+    && (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'));
+$farmType = $salesOnlyScope
+    ? 'general'
+    : normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
 $startDate = $year . '-01-01';
 $endDate = $year . '-12-31';
 
@@ -20,8 +34,10 @@ $salesQuery = "SELECT DATE_FORMAT(sale_date, '%Y-%m') AS month, farm_type, SUM(t
                WHERE farm_id = ? AND sale_date BETWEEN ? AND ?";
 $salesParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
-    $salesQuery .= " AND farm_type = ?";
+if ($farmType === '') {
+    $salesQuery .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
+    $salesQuery .= " AND (farm_type = ? OR farm_type = 'general')";
     $salesParams[] = $farmType;
 }
 
@@ -35,7 +51,9 @@ $expenseQuery = "SELECT DATE_FORMAT(expense_date, '%Y-%m') AS month, farm_type, 
                  WHERE farm_id = ? AND expense_date BETWEEN ? AND ?";
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
+if ($farmType === '' || $salesOnlyScope) {
+    $expenseQuery .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
     $expenseQuery .= " AND (farm_type = ? OR farm_type = 'both')";
     $expenseParams[] = $farmType;
 }
@@ -64,9 +82,10 @@ $createDefaultRow = function (string $month, string $farmType): array {
 };
 
 foreach ($salesData as $sale) {
-    $key = $sale['month'] . '_' . $sale['farm_type'];
+    $saleFarmType = $sale['farm_type'] === 'general' && $farmType !== 'all' ? $farmType : $sale['farm_type'];
+    $key = $sale['month'] . '_' . $saleFarmType;
     if (!isset($profitData[$key])) {
-        $profitData[$key] = $createDefaultRow($sale['month'], $sale['farm_type']);
+        $profitData[$key] = $createDefaultRow($sale['month'], $saleFarmType);
     }
 
     $profitData[$key]['total_sales'] += (float)$sale['total_sales'];
@@ -134,7 +153,9 @@ $expenseQuery = "SELECT category, SUM(amount * unit) as total_amount
                  WHERE farm_id = ? AND expense_date BETWEEN ? AND ?";
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
+if ($farmType === '' || $salesOnlyScope) {
+    $expenseQuery .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
     $expenseQuery .= " AND (farm_type = ? OR farm_type = 'both')";
     $expenseParams[] = $farmType;
 }
@@ -266,9 +287,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
                             </select>
                             <select class="form-select" id="farmTypeFilter" style="width: 200px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option>
-                                <option value="poultry" <?php echo $farmType == 'poultry' ? 'selected' : ''; ?>>Poultry Only</option>
-                                <option value="ruminant" <?php echo $farmType == 'ruminant' ? 'selected' : ''; ?>>Ruminant Only</option>
+                                <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                                <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?> Only</option><?php endforeach; ?>
                                 <?php else: ?>
                                 <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?> Only</option>
                                 <?php endif; ?>

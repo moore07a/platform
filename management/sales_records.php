@@ -32,12 +32,28 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($month));
 }
 
-$farmType = $farmType ?? ($_GET['farm_type'] ?? 'all');
+$salesOnlyScope = enabledFarmTypes() === []
+    && farmHasModule('sales')
+    && (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'));
+// A sales-only workspace has no livestock scope to normalize. Use the neutral
+// classification explicitly so its ledger can see general sales without also
+// exposing historical poultry or ruminant records.
+$requestedFarmType = $farmType ?? ($_GET['farm_type'] ?? null);
+if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
+$farmType = $salesOnlyScope
+    ? 'general'
+    : normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
 $showActions = isPlatformOwner() || hasRole('farm_admin');
 // Sales entitlement enables a separate Sales Representative account; farm admins
 // retain operational entry rights in their own workspace. Viewers are read-only.
 $canRecordSales = isPlatformOwner() || hasRole('farm_admin') || (farmHasModule('sales') && hasRole('sales_rep'));
 $canManageLedger = isPlatformOwner() || hasRole('farm_admin');
+$saleFarmTypes = allowedSalesFarmTypes();
+$saleFarmTypeLabel = static function (string $type): string {
+    return ucfirst($type);
+};
 $selectedCustomer = trim($_GET['customer'] ?? '');
 
 $debtFeatureEnabled = true;
@@ -48,7 +64,14 @@ try {
 }
 
 // Build query based on filters
-if ($farmType === 'all') {
+if ($farmType === '') {
+    $salesQuery = "SELECT s.*, u.full_name as seller
+                   FROM sales_records s
+                   LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
+                   WHERE s.farm_id = ? AND 1 = 0";
+    $salesStmt = $pdo->prepare($salesQuery);
+    $salesStmt->execute([$tenantFarmId]);
+} elseif ($farmType === 'all') {
     $salesQuery = "SELECT s.*, u.full_name as seller
                    FROM sales_records s
                    LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
@@ -61,7 +84,7 @@ if ($farmType === 'all') {
                    FROM sales_records s
                    LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
                    WHERE s.farm_id = ? AND s.sale_date BETWEEN ? AND ?
-                   AND s.farm_type = ?
+                   AND (s.farm_type = ? OR s.farm_type = 'general')
                    ORDER BY s.sale_date DESC";
     $salesStmt = $pdo->prepare($salesQuery);
     $salesStmt->execute([$tenantFarmId, $startDate, $endDate, $farmType]);
@@ -70,7 +93,10 @@ if ($farmType === 'all') {
 $salesRecords = $salesStmt->fetchAll();
 
 // Get sales summary
-if ($farmType === 'all') {
+if ($farmType === '') {
+    $summaries = [];
+    $summary = ['total_sales' => 0, 'transaction_count' => 0, 'avg_price' => 0];
+} elseif ($farmType === 'all') {
     $summaryQuery = "SELECT
                      SUM(total_amount) as total_sales,
                      COUNT(*) as transaction_count,
@@ -89,7 +115,7 @@ if ($farmType === 'all') {
                      AVG(unit_price) as avg_price
                      FROM sales_records
                      WHERE farm_id = ? AND sale_date BETWEEN ? AND ?
-                     AND farm_type = ?";
+                     AND (farm_type = ? OR farm_type = 'general')";
     $summaryStmt = $pdo->prepare($summaryQuery);
     $summaryStmt->execute([$tenantFarmId, $startDate, $endDate, $farmType]);
     $summary = $summaryStmt->fetch();
@@ -194,6 +220,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         }
 
+        $saleFarmType = $_POST['farm_type'] ?? '';
+        if (!in_array($saleFarmType, $saleFarmTypes, true)) {
+            $_SESSION['error'] = "That farm type is not enabled for this farm.";
+            header("Location: sales_records.php?report_mode={$reportMode}&month={$month}&year={$year}&farm_type={$farmType}");
+            exit();
+        }
+
         $stmt = $pdo->prepare("INSERT INTO sales_records
             (farm_id, sale_date, farm_type, product_type, quantity, unit_price,
              customer_name, remarks, user_id)
@@ -202,7 +235,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $stmt->execute([
             $tenantFarmId,
             $_POST['sale_date'],
-            $_POST['farm_type'],
+            $saleFarmType,
             $_POST['product_type'],
             $quantity,
             $unitPrice,
@@ -398,6 +431,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         }
 
+        $saleFarmType = $_POST['farm_type'] ?? '';
+        if (!in_array($saleFarmType, $saleFarmTypes, true)) {
+            $_SESSION['error'] = "That farm type is not enabled for this farm.";
+            header("Location: sales_records.php?report_mode={$reportMode}&month={$month}&year={$year}&farm_type={$farmType}");
+            exit();
+        }
+
         $stmt = $pdo->prepare("UPDATE sales_records
             SET sale_date = ?, farm_type = ?, product_type = ?, quantity = ?,
                 unit_price = ?, customer_name = ?, remarks = ?
@@ -405,7 +445,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $stmt->execute([
             $_POST['sale_date'],
-            $_POST['farm_type'],
+            $saleFarmType,
             $_POST['product_type'],
             $_POST['quantity'],
             $_POST['unit_price'],
@@ -460,9 +500,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <div class="d-flex gap-2 report-controls">
                             <select class="form-select" id="farmTypeFilter" style="width: 150px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option>
-                                <option value="poultry" <?php echo $farmType == 'poultry' ? 'selected' : ''; ?>>Poultry</option>
-                                <option value="ruminant" <?php echo $farmType == 'ruminant' ? 'selected' : ''; ?>>Ruminant</option>
+                                <?php if ($salesOnlyScope): ?><option value="general" selected>All Sales</option><?php endif; ?>
+                                <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                                <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                                 <?php else: ?>
                                 <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?></option>
                                 <?php endif; ?>
@@ -802,8 +842,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                 <label>Farm Type</label>
                                 <select name="farm_type" id="addFarmType" class="form-select" required>
                                     <?php if ($canChooseFarmType): ?>
-                                    <option value="poultry">Poultry</option>
-                                    <option value="ruminant">Ruminant</option>
+                                    <?php foreach ($saleFarmTypes as $type): ?><option value="<?php echo $type; ?>"><?php echo $saleFarmTypeLabel($type); ?></option><?php endforeach; ?>
                                     <?php else: ?>
                                     <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?></option>
                                     <?php endif; ?>
@@ -981,8 +1020,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             <div class="col-md-6 mb-3">
                                 <label>Farm Type</label>
                                 <select name="farm_type" id="editSaleFarmType" class="form-select" required>
-                                    <option value="poultry">Poultry</option>
-                                    <option value="ruminant">Ruminant</option>
+                                    <?php foreach ($saleFarmTypes as $type): ?><option value="<?php echo $type; ?>"><?php echo $saleFarmTypeLabel($type); ?></option><?php endforeach; ?>
                                 </select>
                             </div>
                         </div>

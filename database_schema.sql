@@ -64,7 +64,7 @@ CREATE TABLE stock_transactions (
 CREATE TABLE production_cycles (
     id INT AUTO_INCREMENT PRIMARY KEY,
     cycle_code VARCHAR(100) NOT NULL UNIQUE,
-    farm_type ENUM('poultry','ruminant') NOT NULL,
+    farm_type ENUM('poultry','ruminant','general') NOT NULL,
     production_type VARCHAR(100) NOT NULL,
     status ENUM('planned','active','closed','archived') NOT NULL DEFAULT 'planned',
     start_date DATE NOT NULL,

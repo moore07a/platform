@@ -142,8 +142,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         }
 
-        if (!in_array($farmType, ['poultry', 'ruminant', 'both'], true)) {
-            $farmType = 'both';
+        if (!in_array($farmType, allowedFarmTypes(), true)) {
+            $farmType = allowedFarmTypes()[0] ?? '';
         }
 
         try {
@@ -224,6 +224,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $farmType = 'ruminant';
         } elseif (in_array($feedCategory, ['layer', 'broiler'], true)) {
             $farmType = 'poultry';
+        }
+
+        if (!in_array($farmType, allowedFarmTypes(), true)) {
+            $_SESSION['error'] = "That farm type is not enabled for this farm.";
+            header('Location: inventory.php');
+            exit();
         }
 
         $categoryId = (int)($_POST['category_id'] ?? 0);
@@ -959,9 +965,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                     <div class="mb-3">
                                         <label>Farm Type</label>
                                         <select name="category_farm_type" class="form-select" required>
-                                            <option value="poultry">Poultry</option>
-                                            <option value="ruminant">Ruminant</option>
-                                            <option value="both" selected>Both</option>
+                                            <?php foreach (allowedFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $type === 'both' ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                                         </select>
                                     </div>
                                     <div class="mb-3">
@@ -1050,9 +1054,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                 <div class="col-md-6 mb-3">
                                     <label>Farm Type</label>
                                     <select name="farm_type" class="form-select" required>
-                                        <option value="poultry">Poultry</option>
-                                        <option value="ruminant">Ruminant</option>
-                                        <option value="both">Both</option>
+                                        <?php foreach (allowedFarmTypes() as $type): ?><option value="<?php echo $type; ?>"><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                                     </select>
                                 </div>
                                 <div class="col-md-12 mb-3">

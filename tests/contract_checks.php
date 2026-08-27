@@ -7,6 +7,13 @@ function assertContains(string $needle, string $haystack, string $message): void
     }
 }
 
+function assertNotContains(string $needle, string $haystack, string $message): void
+{
+    if (strpos($haystack, $needle) !== false) {
+        throw new RuntimeException($message);
+    }
+}
+
 function readFileOrFail(string $path): string
 {
     $content = file_get_contents($path);
@@ -47,6 +54,35 @@ $config = readFileOrFail($root . '/config.php');
 assertContains('function farmHasModule', $config, 'Authorization must check enabled farm modules.');
 assertContains('function currentUserRoles', $config, 'Authorization must load user roles.');
 assertContains('function isPlatformOwner', $config, 'Authorization must distinguish the Owner / Developer role.');
+assertContains('function allowedSalesFarmTypes', $config, 'Sales-only farms must have a valid sales classification fallback.');
+assertContains('$types[] = \'general\'', $config, 'Sales-only farms must use a durable neutral sales classification.');
+assertContains('if (!$fallback) return \'\'', $config, 'Disallowed specialist farm types must not fall back to another module.');
+assertContains('return $allowed[0] ?? \'\';', $config, 'A farm without livestock entitlements must not receive an unrestricted report filter.');
+
+$expensesReport = readFileOrFail($root . '/management/expenses.php');
+assertContains("e.farm_type = ? OR e.farm_type = 'both'", $expensesReport, 'Single-module expense reports must include shared expenses.');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $expensesReport, 'Dual-module expense readers must receive the combined report scope.');
+$salesReport = readFileOrFail($root . '/management/sales_records.php');
+assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
+assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
+assertContains("s.farm_type = ? OR s.farm_type = 'general'", $salesReport, 'Module-filtered sales must retain neutral sales records.');
+assertContains("&& (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'))", $salesReport, 'Sales-only workspaces must reject stale livestock-only roles.');
+assertContains("\$salesOnlyScope\n    ? 'general'", $salesReport, 'Authorized sales-only workspaces must select the neutral sales scope.');
+assertContains('option value="general" selected>All Sales', $salesReport, 'The sales-only filter must preserve its neutral scope after redirects.');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $salesReport, 'Dual-module sales readers must receive the combined report scope.');
+$analyticsReport = readFileOrFail($root . '/management/reports.php');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
+assertContains("&& (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'))", $analyticsReport, 'Sales-only analytics must reject stale livestock-only roles.');
+assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Authorized sales-only analytics must select the neutral general scope.');
+assertContains("if (\$farmType === '' || \$salesOnlyScope)", $analyticsReport, 'Sales-only analytics must not deduct livestock expenses.');
+assertContains("if (\$farmType === '' || \$salesOnlyScope) {\n    \$expenseQuery .= \" AND 1 = 0\";", $analyticsReport, 'Empty and sales-only expense breakdown scopes must be empty.');
+$combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
+assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
+assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $combinedReport, 'Dual-module viewers must receive the authorized combined report scope.');
+
+$generalSalesMigration = readFileOrFail($root . '/migrations/010_general_sales_farm_type.sql');
+assertContains("'general'", $generalSalesMigration, 'The sales schema must support durable neutral records.');
 
 $farmsPage = readFileOrFail($root . '/management/farms.php');
 assertContains('requirePlatformOwner()', $farmsPage, 'Farm provisioning must be Owner / Developer-only.');
@@ -107,7 +143,13 @@ assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutatio
 
 $dashboard = readFileOrFail($root . '/dashboard.php');
 assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
+assertContains("\$farmAccess === 'both' && count(enabledFarmTypes()) === 2", $dashboard, 'Combined dashboards must include neutral sales whenever both livestock modules are enabled.');
+assertNotContains("count(enabledFarmTypes()) === 2 && farmHasModule('sales')", $dashboard, 'Combined dashboard neutral sales must not depend on the current Sales entitlement.');
 assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
+assertContains("? \"(s.farm_type = ? OR s.farm_type = 'general')\"", $dashboard, 'Single-module dashboards must show neutral sales in recent sales.');
+assertContains("? \" AND (farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard profit fallback must include neutral sales.');
+assertContains("} elseif (\$includeGeneralSales) {", $dashboard, 'Single-module dashboard summaries must add neutral sales to existing summary rows.');
+assertContains("? \"(farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard activity must include neutral sales.');
 
 // Every specialist expense workspace must read and create records in the active tenant.
 foreach (['poultry/broiler_expenses.php', 'poultry/layer_expenses.php', 'ruminant/ruminant_expenses.php'] as $relativePath) {
