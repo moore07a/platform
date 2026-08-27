@@ -13,6 +13,10 @@ if (!$type || !$id) {
     send_json(['success' => false, 'error' => 'type and id are required'], 400);
 }
 
+if (($type === 'layer' || $type === 'broiler') && !checkAccess('poultry')) {
+    send_json(['success' => false, 'error' => 'Unauthorized for poultry records'], 403);
+}
+
 try {
     if ($type === 'layer') {
         $stmt = $pdo->prepare("DELETE FROM layer_daily_records WHERE id = ? AND farm_id = ?");

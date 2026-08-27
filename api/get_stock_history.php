@@ -14,7 +14,7 @@ if (isset($_GET['item_id'])) {
     $query = "SELECT t.*, s.item_name, s.unit, u.full_name 
               FROM stock_transactions t
               JOIN stock_items s ON t.stock_item_id = s.id
-              LEFT JOIN users u ON t.user_id = u.id
+              LEFT JOIN users u ON t.user_id = u.id AND u.farm_id = t.farm_id
               WHERE t.stock_item_id = ? AND t.farm_id = ? AND s.farm_id = ?
               AND t.transaction_date >= ?
               ORDER BY t.transaction_date DESC, t.id DESC";

@@ -47,7 +47,7 @@ if ($category !== 'all') {
 
 $query = "SELECT e.*, u.full_name 
           FROM farm_expenses e
-          LEFT JOIN users u ON e.user_id = u.id
+          LEFT JOIN users u ON e.user_id = u.id AND u.farm_id = e.farm_id
           {$whereClause}
           ORDER BY e.expense_date DESC";
           
