@@ -7,6 +7,13 @@ function assertContains(string $needle, string $haystack, string $message): void
     }
 }
 
+function assertNotContains(string $needle, string $haystack, string $message): void
+{
+    if (strpos($haystack, $needle) !== false) {
+        throw new RuntimeException($message);
+    }
+}
+
 function readFileOrFail(string $path): string
 {
     $content = file_get_contents($path);
@@ -136,7 +143,8 @@ assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutatio
 
 $dashboard = readFileOrFail($root . '/dashboard.php');
 assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
-assertContains("\$farmAccess === 'both' && count(enabledFarmTypes()) === 2 && farmHasModule('sales')", $dashboard, 'Combined dashboards must include neutral sales when both livestock modules and Sales are enabled.');
+assertContains("\$farmAccess === 'both' && count(enabledFarmTypes()) === 2", $dashboard, 'Combined dashboards must include neutral sales whenever both livestock modules are enabled.');
+assertNotContains("count(enabledFarmTypes()) === 2 && farmHasModule('sales')", $dashboard, 'Combined dashboard neutral sales must not depend on the current Sales entitlement.');
 assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
 assertContains("? \"(s.farm_type = ? OR s.farm_type = 'general')\"", $dashboard, 'Single-module dashboards must show neutral sales in recent sales.');
 assertContains("? \" AND (farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard profit fallback must include neutral sales.');
