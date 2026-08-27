@@ -50,6 +50,7 @@ assertContains('function isPlatformOwner', $config, 'Authorization must distingu
 assertContains('function allowedSalesFarmTypes', $config, 'Sales-only farms must have a valid sales classification fallback.');
 assertContains('$types[] = \'general\'', $config, 'Sales-only farms must use a durable neutral sales classification.');
 assertContains('if (!$fallback) return \'\'', $config, 'Disallowed specialist farm types must not fall back to another module.');
+assertContains('return $allowed[0] ?? \'\';', $config, 'A farm without livestock entitlements must not receive an unrestricted report filter.');
 
 $expensesReport = readFileOrFail($root . '/management/expenses.php');
 assertContains("e.farm_type = ? OR e.farm_type = 'both'", $expensesReport, 'Single-module expense reports must include shared expenses.');
@@ -57,6 +58,9 @@ $salesReport = readFileOrFail($root . '/management/sales_records.php');
 assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
 assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
 assertContains("s.farm_type = ? OR s.farm_type = 'general'", $salesReport, 'Module-filtered sales must retain neutral sales records.');
+$combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
+assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
+assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
 
 $generalSalesMigration = readFileOrFail($root . '/migrations/010_general_sales_farm_type.sql');
 assertContains("'general'", $generalSalesMigration, 'The sales schema must support durable neutral records.');

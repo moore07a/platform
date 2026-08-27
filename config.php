@@ -171,7 +171,10 @@ function normalizeFarmType(?string $farmType, bool $allowAll = false, bool $incl
     if ($allowAll && count(enabledFarmTypes()) === 2) array_unshift($allowed, 'all');
     if ($farmType !== null && in_array($farmType, $allowed, true)) return $farmType;
     if (!$fallback) return '';
-    return $allowed[0] ?? 'all';
+    // No enabled livestock module means there is no safe report scope. In
+    // particular, never turn an empty entitlement set into the unrestricted
+    // "all" filter, even for roles that normally choose their own filter.
+    return $allowed[0] ?? '';
 }
 
 function requirePlatformOwner(): void {

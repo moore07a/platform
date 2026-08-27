@@ -180,6 +180,9 @@ foreach ($stockRows as $row) {
                 <div class="col-md-6"><div class="card border-warning"><div class="card-body"><h6>Ruminant Sales</h6><h3>₦<?php echo number_format($salesSummary['ruminant'] ?? 0, 2); ?></h3></div></div></div>
                 <div class="col-md-6"><div class="card border-danger"><div class="card-body"><h6>Ruminant Expenses</h6><h3>₦<?php echo number_format($expenseSummary['ruminant'] ?? 0, 2); ?></h3></div></div></div>
                 <?php endif; ?>
+                <?php if ($farmType === 'all' && isset($salesSummary['general'])): ?>
+                <div class="col-md-6"><div class="card border-success"><div class="card-body"><h6>General Sales</h6><h3>₦<?php echo number_format($salesSummary['general'], 2); ?></h3></div></div></div>
+                <?php endif; ?>
             </div>
             <div class="table-responsive">
                 <table class="table table-bordered">
