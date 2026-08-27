@@ -20,9 +20,10 @@ $farmAccessLabel = hasRole('sales_rep') ? 'sales' : $farmAccess;
 if ($farmAccess === 'all') {
     $farmAccess = 'both';
 }
-// General sales are a durable, neutral classification. Keep them visible in a
-// single-livestock dashboard even if the farm's Sales module is later disabled.
-$includeGeneralSales = in_array($farmAccess, ['poultry', 'ruminant'], true);
+// General sales are a durable, neutral classification, but only an active
+// livestock scope may inherit them. A stale specialist role must not expose
+// neutral sales after that livestock module has been disabled for the farm.
+$includeGeneralSales = in_array($farmAccess, enabledFarmTypes(), true);
 
 // Get current stock levels
 $tenantFarmId = requireCurrentFarmId();
