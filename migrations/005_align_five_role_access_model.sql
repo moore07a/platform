@@ -7,7 +7,8 @@ ALTER TABLE users MODIFY user_type ENUM(
 ) NOT NULL;
 
 INSERT INTO roles (code, name, is_platform_role)
-VALUES ('farm_admin', 'Admin / Farm Owner', 0);
+VALUES ('farm_admin', 'Admin / Farm Owner', 0)
+ON DUPLICATE KEY UPDATE name = VALUES(name), is_platform_role = VALUES(is_platform_role);
 
 INSERT IGNORE INTO user_roles (user_id, role_id)
 SELECT ur.user_id, farm_admin.id

@@ -49,6 +49,7 @@ $roleAlignmentMigration = readFileOrFail($root . '/migrations/005_align_five_rol
 foreach (['platform_owner', 'farm_admin', 'ruminant_manager', 'poultry_manager', 'sales_rep'] as $role) {
     assertContains("'{$role}'", $roleAlignmentMigration, "The five-role model must include {$role}.");
 }
+assertContains('ON DUPLICATE KEY UPDATE', $roleAlignmentMigration, 'Role alignment must be safe to resume after creating farm_admin.');
 
 $config = readFileOrFail($root . '/config.php');
 assertContains('function farmHasModule', $config, 'Authorization must check enabled farm modules.');
