@@ -327,6 +327,17 @@ if (!$profitData || $profitData['net_profit'] === null) {
         'total_expenses' => $fallbackExpenses,
         'net_profit' => $fallbackSales - $fallbackExpenses,
     ];
+} elseif ($includeGeneralSales) {
+    // Livestock summary rows do not contain neutral General sales. Add those
+    // sales to an existing summary so this path matches the direct fallback.
+    $generalSalesStmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(total_amount), 0) FROM sales_records
+         WHERE farm_id = ? AND sale_date BETWEEN ? AND ? AND farm_type = 'general'"
+    );
+    $generalSalesStmt->execute([$tenantFarmId, $monthStart, $monthEnd]);
+    $generalSales = (float) $generalSalesStmt->fetchColumn();
+    $profitData['total_sales'] = (float) ($profitData['total_sales'] ?? 0) + $generalSales;
+    $profitData['net_profit'] = (float) $profitData['net_profit'] + $generalSales;
 }
 
 // Calculate dashboard statistics

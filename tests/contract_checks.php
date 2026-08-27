@@ -66,7 +66,7 @@ $analyticsReport = readFileOrFail($root . '/management/reports.php');
 assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
 assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Sales-only analytics must select the neutral general scope.');
 assertContains("if (\$farmType === '' || \$salesOnlyScope)", $analyticsReport, 'Sales-only analytics must not deduct livestock expenses.');
-assertContains("if (\$salesOnlyScope) {\n    \$expenseQuery .= \" AND 1 = 0\";", $analyticsReport, 'Sales-only expense breakdowns must be empty.');
+assertContains("if (\$farmType === '' || \$salesOnlyScope) {\n    \$expenseQuery .= \" AND 1 = 0\";", $analyticsReport, 'Empty and sales-only expense breakdown scopes must be empty.');
 $combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
 assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
 assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
@@ -138,6 +138,7 @@ assertContains("\$includeGeneralSales = in_array(\$farmAccess, ['poultry', 'rumi
 assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
 assertContains("? \"(s.farm_type = ? OR s.farm_type = 'general')\"", $dashboard, 'Single-module dashboards must show neutral sales in recent sales.');
 assertContains("? \" AND (farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard profit fallback must include neutral sales.');
+assertContains("} elseif (\$includeGeneralSales) {", $dashboard, 'Single-module dashboard summaries must add neutral sales to existing summary rows.');
 assertContains("? \"(farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard activity must include neutral sales.');
 
 // Every specialist expense workspace must read and create records in the active tenant.

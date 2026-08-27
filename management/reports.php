@@ -151,7 +151,7 @@ $expenseQuery = "SELECT category, SUM(amount * unit) as total_amount
                  WHERE farm_id = ? AND expense_date BETWEEN ? AND ?";
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($salesOnlyScope) {
+if ($farmType === '' || $salesOnlyScope) {
     $expenseQuery .= " AND 1 = 0";
 } elseif ($farmType !== 'all') {
     $expenseQuery .= " AND (farm_type = ? OR farm_type = 'both')";
