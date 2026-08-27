@@ -125,4 +125,11 @@ foreach (['UPDATE stock_items SET is_active = 0 WHERE id = ? AND farm_id = ?', '
 
 assertContains("SELECT id FROM production_cycles WHERE id = ? AND farm_id = ? AND status = 'active'", $productionCycles, 'Stock batches must only link to an active cycle in the current farm.');
 
+$farmsPage = readFileOrFail($root . '/management/farms.php');
+assertContains('function detectFarmLogoExtension', $farmsPage, 'Farm logos must be validated before provisioning begins.');
+assertContains('function findFarmAdminId', $farmsPage, 'Farm editing must recover legacy or partially-created admin users.');
+assertContains("INSERT INTO users (farm_id, username, password, email, user_type, full_name)", $farmsPage, 'Editing an incomplete farm must be able to create its missing admin.');
+assertContains('Incomplete farm cleanup failed', $farmsPage, 'Failed provisioning must perform compensating cleanup on non-transactional databases.');
+assertContains('This farm was only partially created and has no admin account.', $farmsPage, 'Incomplete farms must show actionable repair guidance.');
+
 echo "Contract checks passed.\n";

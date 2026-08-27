@@ -15,6 +15,7 @@ This review covered every tracked PHP, JavaScript, CSS, SQL, and documentation f
 7. **Critical — specialist expense tenant leakage.** Broiler, layer, and ruminant expense pages neither filtered reads by `farm_id` nor assigned `farm_id` on inserts. All three now bind the active farm and tenant-scope their user joins.
 8. **High — cross-tenant inventory ID mutation.** Forged item/category IDs could reach destructive inventory operations without a farm predicate. Category ownership is now validated and item/history mutations require both the record ID and active `farm_id`.
 9. **High — cross-tenant cycle relationship.** A forged cycle ID could link a stock batch belonging to one farm to another farm's cycle. The relationship now requires an active cycle owned by the current farm.
+10. **High — partial farm provisioning.** Logo validation occurred after the farm row was inserted, so databases without transactional table support could retain a farm with no modules or admin. Logo data is now validated first, failed provisioning performs compensating cleanup, module/role inserts are verified, and edit mode can recreate a missing admin account.
 
 ## Recommended follow-up
 
