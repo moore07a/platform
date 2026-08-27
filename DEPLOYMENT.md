@@ -49,6 +49,14 @@ production model: **Owner / Developer**, **Admin / Farm Owner**, **Ruminant
 Manager**, **Poultry Manager**, and **Sales Representative**. It converts the
 existing role assignments; deploy it after `004` before allowing users back in.
 
+`011_repair_access_roles.sql` is an idempotent repair for installations where the
+role-alignment step was interrupted. It only inserts/updates the six canonical
+role definitions and adds missing `user_roles` links for recognized user types;
+it does **not** delete farms, users, credentials, or operational records. Take a
+database backup as usual, then run the migration command once before testing
+Platform Access and creating a new farm. Login itself does not write to the
+authorization tables.
+
 ## 3) Database account security
 
 - Rotate DB password before production deploy.
