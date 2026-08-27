@@ -36,7 +36,8 @@ $whereClause = "WHERE e.farm_id = ? AND e.expense_date BETWEEN ? AND ?";
 $params = [$tenantFarmId, $startDate, $endDate];
 
 if ($farmType !== 'all') {
-    $whereClause .= " AND e.farm_type = ?";
+    // Shared expenses continue to apply when only one livestock module remains enabled.
+    $whereClause .= " AND (e.farm_type = ? OR e.farm_type = 'both')";
     $params[] = $farmType;
 }
 

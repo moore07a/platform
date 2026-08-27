@@ -154,6 +154,17 @@ function allowedFarmTypes(bool $includeBoth = true): array {
     return $types;
 }
 
+/**
+ * Farm-type values accepted by the legacy sales_records schema. Sales-only
+ * workspaces have no livestock entitlement, so use the schema's poultry value
+ * as a neutral storage fallback while presenting it as "General" in the UI.
+ */
+function allowedSalesFarmTypes(): array {
+    $types = allowedFarmTypes(false);
+    if (!$types && farmHasModule('sales')) return ['poultry'];
+    return $types;
+}
+
 /** Constrain a URL/form farm type to the current farm's subscriptions. */
 function normalizeFarmType(?string $farmType, bool $allowAll = false, bool $includeBoth = true): string {
     $allowed = allowedFarmTypes($includeBoth);

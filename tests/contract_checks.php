@@ -47,6 +47,13 @@ $config = readFileOrFail($root . '/config.php');
 assertContains('function farmHasModule', $config, 'Authorization must check enabled farm modules.');
 assertContains('function currentUserRoles', $config, 'Authorization must load user roles.');
 assertContains('function isPlatformOwner', $config, 'Authorization must distinguish the Owner / Developer role.');
+assertContains('function allowedSalesFarmTypes', $config, 'Sales-only farms must have a valid sales classification fallback.');
+
+$expensesReport = readFileOrFail($root . '/management/expenses.php');
+assertContains("e.farm_type = ? OR e.farm_type = 'both'", $expensesReport, 'Single-module expense reports must include shared expenses.');
+$salesReport = readFileOrFail($root . '/management/sales_records.php');
+assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
+assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
 
 $farmsPage = readFileOrFail($root . '/management/farms.php');
 assertContains('requirePlatformOwner()', $farmsPage, 'Farm provisioning must be Owner / Developer-only.');
