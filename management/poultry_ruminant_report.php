@@ -15,11 +15,11 @@ $year = $_GET['year'] ?? date('Y');
 $requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
 // getUserFarmType() represents dual-module viewer access as "both", while
 // reports represent that same authorized combined scope as "all".
-if (!$canChooseFarmType && $requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+if (!$canChooseFarmType && $requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2) {
     $requestedFarmType = 'all';
 }
 $farmType = normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
-$visibleFarmTypes = $farmType === 'all' ? enabledFarmTypes() : [$farmType];
+$visibleFarmTypes = $farmType === 'all' ? accessibleFarmTypes() : [$farmType];
 
 if ($reportMode === 'yearly') {
     $year = date('Y', strtotime($year . '-01-01'));
@@ -157,8 +157,8 @@ foreach ($stockRows as $row) {
             <div class="d-flex gap-2 report-controls">
                 <select class="form-select" id="farmTypeFilter" style="width: 150px;">
                     <?php if ($canChooseFarmType): ?>
-                        <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType === 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
-                        <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
+                        <?php if (count(accessibleFarmTypes()) === 2): ?><option value="all" <?php echo $farmType === 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                        <?php foreach (accessibleFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                     <?php else: ?>
                         <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?></option>
                     <?php endif; ?>

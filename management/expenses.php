@@ -29,7 +29,7 @@ if ($reportMode === 'yearly') {
 }
 
 $requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
-if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+if ($requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2) {
     $requestedFarmType = 'all';
 }
 $farmType = normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
@@ -97,8 +97,8 @@ foreach ($expenses as $expense) {
                         <div class="d-flex gap-2 report-controls">
                             <select class="form-select" id="farmTypeFilter" style="width: 150px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
-                                <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
+                                <?php if (count(accessibleFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                                <?php foreach (accessibleFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                                 <?php else: ?>
                                 <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?></option>
                                 <?php endif; ?>

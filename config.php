@@ -146,14 +146,33 @@ function enabledFarmTypes(): array {
     }));
 }
 
+/** Livestock types the current user may select in forms and report filters. */
+function accessibleFarmTypes(): array {
+    // The platform owner has global operational access, including when the
+    // dedicated owner workspace has no tenant module rows of its own.
+    return isPlatformOwner() ? ['poultry', 'ruminant'] : enabledFarmTypes();
+}
+
 /**
  * Values that may be stored in a Farm Type field. "Both" is meaningful only
  * when the farm is entitled to both livestock modules.
  */
 function allowedFarmTypes(bool $includeBoth = true): array {
-    $types = enabledFarmTypes();
+    $types = accessibleFarmTypes();
     if ($includeBoth && count($types) === 2) $types[] = 'both';
     return $types;
+}
+
+/** Feed classifications available under the current farm's subscriptions. */
+function allowedFeedCategories(): array {
+    $categories = ['general'];
+    $farmTypes = accessibleFarmTypes();
+    if (in_array('poultry', $farmTypes, true)) {
+        $categories[] = 'layer';
+        $categories[] = 'broiler';
+    }
+    if (in_array('ruminant', $farmTypes, true)) $categories[] = 'ruminant';
+    return $categories;
 }
 
 /**
@@ -170,7 +189,7 @@ function allowedSalesFarmTypes(): array {
 /** Constrain a URL/form farm type to the current farm's subscriptions. */
 function normalizeFarmType(?string $farmType, bool $allowAll = false, bool $includeBoth = true, bool $fallback = true): string {
     $allowed = allowedFarmTypes($includeBoth);
-    if ($allowAll && count(enabledFarmTypes()) === 2) array_unshift($allowed, 'all');
+    if ($allowAll && count(accessibleFarmTypes()) === 2) array_unshift($allowed, 'all');
     if ($farmType !== null && in_array($farmType, $allowed, true)) return $farmType;
     if (!$fallback) return '';
     // No enabled livestock module means there is no safe report scope. In

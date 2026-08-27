@@ -59,10 +59,15 @@ assertContains('function allowedSalesFarmTypes', $config, 'Sales-only farms must
 assertContains('$types[] = \'general\'', $config, 'Sales-only farms must use a durable neutral sales classification.');
 assertContains('if (!$fallback) return \'\'', $config, 'Disallowed specialist farm types must not fall back to another module.');
 assertContains('return $allowed[0] ?? \'\';', $config, 'A farm without livestock entitlements must not receive an unrestricted report filter.');
+assertContains('function allowedFeedCategories', $config, 'Feed classifications must be derived from farm subscriptions for every role.');
+assertContains('function accessibleFarmTypes', $config, 'Selectable farm types must account for platform-owner access.');
+assertContains("return isPlatformOwner() ? ['poultry', 'ruminant'] : enabledFarmTypes();", $config, 'Platform owners must receive both livestock choices even in the dedicated owner workspace.');
+assertContains("if (in_array('poultry', \$farmTypes, true))", $config, 'Poultry feed classifications must require poultry access.');
+assertContains("if (in_array('ruminant', \$farmTypes, true)) \$categories[] = 'ruminant';", $config, 'Ruminant feed classifications must require ruminant access.');
 
 $expensesReport = readFileOrFail($root . '/management/expenses.php');
 assertContains("e.farm_type = ? OR e.farm_type = 'both'", $expensesReport, 'Single-module expense reports must include shared expenses.');
-assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $expensesReport, 'Dual-module expense readers must receive the combined report scope.');
+assertContains("\$requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2", $expensesReport, 'Dual-module expense readers must receive the combined report scope.');
 $salesReport = readFileOrFail($root . '/management/sales_records.php');
 assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
 assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
@@ -70,9 +75,9 @@ assertContains("s.farm_type = ? OR s.farm_type = 'general'", $salesReport, 'Modu
 assertContains("&& (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'))", $salesReport, 'Sales-only workspaces must reject stale livestock-only roles.');
 assertContains("\$salesOnlyScope\n    ? 'general'", $salesReport, 'Authorized sales-only workspaces must select the neutral sales scope.');
 assertContains('option value="general" selected>All Sales', $salesReport, 'The sales-only filter must preserve its neutral scope after redirects.');
-assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $salesReport, 'Dual-module sales readers must receive the combined report scope.');
+assertContains("\$requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2", $salesReport, 'Dual-module sales readers must receive the combined report scope.');
 $analyticsReport = readFileOrFail($root . '/management/reports.php');
-assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
+assertContains("\$requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
 assertContains("&& (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'))", $analyticsReport, 'Sales-only analytics must reject stale livestock-only roles.');
 assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Authorized sales-only analytics must select the neutral general scope.');
 assertContains("if (\$farmType === '' || \$salesOnlyScope)", $analyticsReport, 'Sales-only analytics must not deduct livestock expenses.');
@@ -80,7 +85,7 @@ assertContains("if (\$farmType === '' || \$salesOnlyScope) {\n    \$expenseQuery
 $combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
 assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
 assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
-assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $combinedReport, 'Dual-module viewers must receive the authorized combined report scope.');
+assertContains("\$requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2", $combinedReport, 'Dual-module viewers must receive the authorized combined report scope.');
 
 $generalSalesMigration = readFileOrFail($root . '/migrations/010_general_sales_farm_type.sql');
 assertContains("'general'", $generalSalesMigration, 'The sales schema must support durable neutral records.');
@@ -98,6 +103,8 @@ assertContains('si.farm_id = ?', $inventory, 'Inventory reads must be scoped to 
 assertContains('INSERT INTO inventory_categories (farm_id', $inventory, 'New categories must be assigned to the active farm.');
 assertContains('INSERT INTO stock_items', $inventory, 'Inventory must create stock items.');
 assertContains('(farm_id, item_name, category_id', $inventory, 'New stock items must be assigned to the active farm.');
+assertContains('foreach (allowedFeedCategories() as $category)', $inventory, 'The feed type dropdown must show only subscribed feed classifications.');
+assertContains('in_array($feedCategory, allowedFeedCategories(), true)', $inventory, 'Inventory must reject feed classifications outside the farm subscription.');
 
 $navbar = readFileOrFail($root . '/navbar.php');
 assertContains('!isPlatformOwner() && hasPermission', $navbar, 'Platform owners should not be sent to farm-only user management.');
@@ -141,6 +148,21 @@ assertContains('water_consumption_liters, other_details', $productionCycles, 'Ru
 assertContains('VALUES (?, ?, ?, ?, ?, 0, 0, 0, NULL', $productionCycles, 'Ruminant cycle seed must provide zero rather than NULL for required water consumption.');
 assertContains('$pdo->beginTransaction()', $productionCycles, 'Cycle creation and its opening record must be atomic.');
 assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutations must enforce CSRF.');
+assertContains('foreach (allowedFarmTypes(false) as $type)', $productionCycles, 'The cycle form Farm Type dropdown must follow the active farm subscription for platform owners and farm admins.');
+
+// Platform owners work inside an active farm workspace, so their report filters
+// must offer that farm's enabled modules rather than exposing unrelated types.
+foreach ([
+    'management/sales_records.php',
+    'management/expenses.php',
+    'management/poultry_ruminant_report.php',
+    'management/reports.php',
+] as $relativePath) {
+    $reportPage = readFileOrFail($root . '/' . $relativePath);
+    assertContains('$canChooseFarmType = isPlatformOwner()', $reportPage, "{$relativePath} must let platform owners choose the report farm type.");
+    assertContains('count(accessibleFarmTypes()) === 2', $reportPage, "{$relativePath} must offer All Farms for dual access, including platform owners.");
+    assertContains('foreach (accessibleFarmTypes() as $type)', $reportPage, "{$relativePath} must list every livestock type accessible to the current user.");
+}
 
 $dashboard = readFileOrFail($root . '/dashboard.php');
 assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
