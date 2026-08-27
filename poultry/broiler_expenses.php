@@ -11,6 +11,7 @@ if (!checkAccess('poultry')) {
 }
 
 $canManageExpenses = isPlatformOwner() || hasRole('farm_admin');
+$tenantFarmId = requireCurrentFarmId();
 
 $month = $_GET['month'] ?? date('Y-m');
 $yearMonth = date('Y-m', strtotime($month));
@@ -21,13 +22,13 @@ $endDate = date('Y-m-t', strtotime($yearMonth . '-01'));
 // Get expenses for the month
 $query = "SELECT e.*, u.full_name
           FROM farm_expenses e
-          LEFT JOIN users u ON e.user_id = u.id
-          WHERE e.expense_date BETWEEN ? AND ?
+          LEFT JOIN users u ON e.user_id = u.id AND u.farm_id = e.farm_id
+          WHERE e.farm_id = ? AND e.expense_date BETWEEN ? AND ?
           AND e.farm_type IN ('poultry', 'both')
           AND e.poultry_category = 'broiler'
           ORDER BY e.expense_date DESC";
 $stmt = $pdo->prepare($query);
-$stmt->execute([$startDate, $endDate]);
+$stmt->execute([$tenantFarmId, $startDate, $endDate]);
 $expenses = $stmt->fetchAll();
 
 // Calculate totals
@@ -45,11 +46,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_expense'])) {
     $expenseDate = $_POST['expense_date'];
 
     $stmt = $pdo->prepare("INSERT INTO farm_expenses
-        (expense_date, farm_type, poultry_category, category, amount, unit, description, user_id)
-        VALUES (?, 'poultry', 'broiler', ?, ?, ?, ?, ?)");
+        (farm_id, expense_date, farm_type, poultry_category, category, amount, unit, description, user_id)
+        VALUES (?, ?, 'poultry', 'broiler', ?, ?, ?, ?, ?)");
 
     $stmt->execute([
-        $expenseDate,
+        $tenantFarmId, $expenseDate,
         $_POST['category'],
         $_POST['amount'],
         $_POST['unit'] ?? 1,

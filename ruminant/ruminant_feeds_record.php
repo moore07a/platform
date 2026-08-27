@@ -23,7 +23,7 @@ $endDate = date('Y-m-t', strtotime($yearMonth));
 $query = "SELECT t.*, s.item_name, s.unit, u.full_name
           FROM stock_transactions t
           JOIN stock_items s ON t.stock_item_id = s.id
-          LEFT JOIN users u ON t.user_id = u.id
+          LEFT JOIN users u ON t.user_id = u.id AND u.farm_id = t.farm_id
           WHERE t.farm_id = ? AND s.farm_id = ? AND t.transaction_date BETWEEN ? AND ?
           AND s.farm_type IN ('ruminant', 'both')
           AND s.feed_category = 'ruminant'

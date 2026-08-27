@@ -9,7 +9,7 @@ require_rate_limit('update_stock', 80, 60);
 
 $data = json_input();
 
-if (!isset($data['item_id'], $data['type'], $data['quantity'], $data['farm_type'])) {
+if (!isset($data['item_id'], $data['type'], $data['quantity'])) {
     send_json(['success' => false, 'error' => 'Missing required fields'], 400);
 }
 
@@ -24,6 +24,16 @@ try {
     
     if (!$item) {
         throw new Exception('Item not found');
+    }
+
+    $itemFarmType = $item['farm_type'];
+    $canUpdateItem = isPlatformOwner()
+        || ($itemFarmType === 'poultry' && checkAccess('poultry'))
+        || ($itemFarmType === 'ruminant' && checkAccess('ruminant'))
+        || ($itemFarmType === 'both' && (checkAccess('poultry') || checkAccess('ruminant')));
+    if (!$canUpdateItem) {
+        $pdo->rollBack();
+        send_json(['success' => false, 'error' => 'Unauthorized for this inventory item'], 403);
     }
     
     // Calculate new stock
@@ -58,7 +68,7 @@ try {
         $new_stock,
         $data['remarks'] ?? null,
         $_SESSION['user_id'],
-        $data['farm_type'],
+        $itemFarmType,
         $farmId
     ]);
     
