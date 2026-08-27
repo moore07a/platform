@@ -28,7 +28,11 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($selectedMonth));
 }
 
-$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false, $canChooseFarmType);
+$requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
+if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
+$farmType = normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
 $category = $_GET['category'] ?? 'all';
 
 // Build query based on filters

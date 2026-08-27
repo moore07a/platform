@@ -36,9 +36,13 @@ $salesOnlyScope = enabledFarmTypes() === [] && farmHasModule('sales');
 // A sales-only workspace has no livestock scope to normalize. Use the neutral
 // classification explicitly so its ledger can see general sales without also
 // exposing historical poultry or ruminant records.
+$requestedFarmType = $farmType ?? ($_GET['farm_type'] ?? null);
+if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
 $farmType = $salesOnlyScope
     ? 'general'
-    : normalizeFarmType($farmType ?? ($_GET['farm_type'] ?? null), true, false, $canChooseFarmType);
+    : normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
 $showActions = isPlatformOwner() || hasRole('farm_admin');
 // Sales entitlement enables a separate Sales Representative account; farm admins
 // retain operational entry rights in their own workspace. Viewers are read-only.

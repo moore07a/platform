@@ -10,7 +10,19 @@ $userFarmType = getUserFarmType();
 $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 
 $year = $_GET['year'] ?? date('Y');
-$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false, $canChooseFarmType);
+$requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
+// User access represents a dual-module assignment as "both", while report
+// filters represent the same combined read scope as "all".
+if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
+
+// Sales-only farms have no livestock scope to normalize, but their neutral
+// general sales must remain available to the analytics dashboard and export.
+$salesOnlyScope = enabledFarmTypes() === [] && farmHasModule('sales');
+$farmType = $salesOnlyScope
+    ? 'general'
+    : normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
 $startDate = $year . '-01-01';
 $endDate = $year . '-12-31';
 

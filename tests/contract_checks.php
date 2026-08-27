@@ -54,12 +54,17 @@ assertContains('return $allowed[0] ?? \'\';', $config, 'A farm without livestock
 
 $expensesReport = readFileOrFail($root . '/management/expenses.php');
 assertContains("e.farm_type = ? OR e.farm_type = 'both'", $expensesReport, 'Single-module expense reports must include shared expenses.');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $expensesReport, 'Dual-module expense readers must receive the combined report scope.');
 $salesReport = readFileOrFail($root . '/management/sales_records.php');
 assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
 assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
 assertContains("s.farm_type = ? OR s.farm_type = 'general'", $salesReport, 'Module-filtered sales must retain neutral sales records.');
 assertContains("\$salesOnlyScope\n    ? 'general'", $salesReport, 'Sales-only workspaces must select the neutral sales scope.');
 assertContains('option value="general" selected>All Sales', $salesReport, 'The sales-only filter must preserve its neutral scope after redirects.');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $salesReport, 'Dual-module sales readers must receive the combined report scope.');
+$analyticsReport = readFileOrFail($root . '/management/reports.php');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
+assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Sales-only analytics must select the neutral general scope.');
 $combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
 assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
 assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
