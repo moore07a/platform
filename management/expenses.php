@@ -28,14 +28,16 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($selectedMonth));
 }
 
-$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false);
+$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false, $canChooseFarmType);
 $category = $_GET['category'] ?? 'all';
 
 // Build query based on filters
 $whereClause = "WHERE e.farm_id = ? AND e.expense_date BETWEEN ? AND ?";
 $params = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
+if ($farmType === '') {
+    $whereClause .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
     // Shared expenses continue to apply when only one livestock module remains enabled.
     $whereClause .= " AND (e.farm_type = ? OR e.farm_type = 'both')";
     $params[] = $farmType;

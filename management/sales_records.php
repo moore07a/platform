@@ -32,15 +32,15 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($month));
 }
 
-$farmType = normalizeFarmType($farmType ?? ($_GET['farm_type'] ?? null), true, false);
+$farmType = normalizeFarmType($farmType ?? ($_GET['farm_type'] ?? null), true, false, $canChooseFarmType);
 $showActions = isPlatformOwner() || hasRole('farm_admin');
 // Sales entitlement enables a separate Sales Representative account; farm admins
 // retain operational entry rights in their own workspace. Viewers are read-only.
 $canRecordSales = isPlatformOwner() || hasRole('farm_admin') || (farmHasModule('sales') && hasRole('sales_rep'));
 $canManageLedger = isPlatformOwner() || hasRole('farm_admin');
 $saleFarmTypes = allowedSalesFarmTypes();
-$saleFarmTypeLabel = static function (string $type) use ($saleFarmTypes): string {
-    return count(enabledFarmTypes()) === 0 && $saleFarmTypes === ['poultry'] ? 'General' : ucfirst($type);
+$saleFarmTypeLabel = static function (string $type): string {
+    return ucfirst($type);
 };
 $selectedCustomer = trim($_GET['customer'] ?? '');
 
@@ -52,7 +52,14 @@ try {
 }
 
 // Build query based on filters
-if ($farmType === 'all') {
+if ($farmType === '') {
+    $salesQuery = "SELECT s.*, u.full_name as seller
+                   FROM sales_records s
+                   LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
+                   WHERE s.farm_id = ? AND 1 = 0";
+    $salesStmt = $pdo->prepare($salesQuery);
+    $salesStmt->execute([$tenantFarmId]);
+} elseif ($farmType === 'all') {
     $salesQuery = "SELECT s.*, u.full_name as seller
                    FROM sales_records s
                    LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
@@ -65,7 +72,7 @@ if ($farmType === 'all') {
                    FROM sales_records s
                    LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
                    WHERE s.farm_id = ? AND s.sale_date BETWEEN ? AND ?
-                   AND s.farm_type = ?
+                   AND (s.farm_type = ? OR s.farm_type = 'general')
                    ORDER BY s.sale_date DESC";
     $salesStmt = $pdo->prepare($salesQuery);
     $salesStmt->execute([$tenantFarmId, $startDate, $endDate, $farmType]);
@@ -74,7 +81,10 @@ if ($farmType === 'all') {
 $salesRecords = $salesStmt->fetchAll();
 
 // Get sales summary
-if ($farmType === 'all') {
+if ($farmType === '') {
+    $summaries = [];
+    $summary = ['total_sales' => 0, 'transaction_count' => 0, 'avg_price' => 0];
+} elseif ($farmType === 'all') {
     $summaryQuery = "SELECT
                      SUM(total_amount) as total_sales,
                      COUNT(*) as transaction_count,
@@ -93,7 +103,7 @@ if ($farmType === 'all') {
                      AVG(unit_price) as avg_price
                      FROM sales_records
                      WHERE farm_id = ? AND sale_date BETWEEN ? AND ?
-                     AND farm_type = ?";
+                     AND (farm_type = ? OR farm_type = 'general')";
     $summaryStmt = $pdo->prepare($summaryQuery);
     $summaryStmt->execute([$tenantFarmId, $startDate, $endDate, $farmType]);
     $summary = $summaryStmt->fetch();

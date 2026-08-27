@@ -12,7 +12,7 @@ $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 $reportMode = $_GET['report_mode'] ?? 'monthly';
 $month = $_GET['month'] ?? date('Y-m');
 $year = $_GET['year'] ?? date('Y');
-$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false);
+$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false, $canChooseFarmType);
 $visibleFarmTypes = $farmType === 'all' ? enabledFarmTypes() : [$farmType];
 
 if ($reportMode === 'yearly') {
@@ -28,12 +28,12 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($startDate));
 }
 
-$farmFilterSql = '';
+$farmFilterSql = $farmType === '' ? ' AND 1 = 0' : '';
 $farmParams = [];
 if ($farmType === 'poultry') {
-    $farmFilterSql = " AND farm_type = 'poultry'";
+    $farmFilterSql = " AND farm_type IN ('poultry', 'general')";
 } elseif ($farmType === 'ruminant') {
-    $farmFilterSql = " AND farm_type = 'ruminant'";
+    $farmFilterSql = " AND farm_type IN ('ruminant', 'general')";
 }
 
 $salesStmt = $pdo->prepare("SELECT farm_type, SUM(total_amount) AS total_sales
@@ -42,14 +42,18 @@ $salesStmt = $pdo->prepare("SELECT farm_type, SUM(total_amount) AS total_sales
                            GROUP BY farm_type");
 $salesStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $salesSummary = $salesStmt->fetchAll(PDO::FETCH_KEY_PAIR);
+if ($farmType !== 'all' && isset($salesSummary['general'])) {
+    $salesSummary[$farmType] = (float)($salesSummary[$farmType] ?? 0) + (float)$salesSummary['general'];
+    unset($salesSummary['general']);
+}
 
 $expenseStmt = $pdo->prepare("SELECT farm_type, SUM(amount * unit) AS total_expenses
                               FROM farm_expenses
                               WHERE farm_id = ? AND expense_date BETWEEN ? AND ?" .
-                              ($farmType === 'all' ? '' : " AND (farm_type = ? OR farm_type = 'both')") .
+                              ($farmType === '' ? ' AND 1 = 0' : ($farmType === 'all' ? '' : " AND (farm_type = ? OR farm_type = 'both')")) .
                               " GROUP BY farm_type");
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
-if ($farmType !== 'all') {
+if ($farmType !== '' && $farmType !== 'all') {
     $expenseParams[] = $farmType;
 }
 $expenseStmt->execute($expenseParams);

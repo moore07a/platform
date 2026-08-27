@@ -10,7 +10,7 @@ $userFarmType = getUserFarmType();
 $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 
 $year = $_GET['year'] ?? date('Y');
-$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false);
+$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false, $canChooseFarmType);
 $startDate = $year . '-01-01';
 $endDate = $year . '-12-31';
 
@@ -20,8 +20,10 @@ $salesQuery = "SELECT DATE_FORMAT(sale_date, '%Y-%m') AS month, farm_type, SUM(t
                WHERE farm_id = ? AND sale_date BETWEEN ? AND ?";
 $salesParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
-    $salesQuery .= " AND farm_type = ?";
+if ($farmType === '') {
+    $salesQuery .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
+    $salesQuery .= " AND (farm_type = ? OR farm_type = 'general')";
     $salesParams[] = $farmType;
 }
 
@@ -35,7 +37,9 @@ $expenseQuery = "SELECT DATE_FORMAT(expense_date, '%Y-%m') AS month, farm_type, 
                  WHERE farm_id = ? AND expense_date BETWEEN ? AND ?";
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
+if ($farmType === '') {
+    $expenseQuery .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
     $expenseQuery .= " AND (farm_type = ? OR farm_type = 'both')";
     $expenseParams[] = $farmType;
 }
@@ -64,9 +68,10 @@ $createDefaultRow = function (string $month, string $farmType): array {
 };
 
 foreach ($salesData as $sale) {
-    $key = $sale['month'] . '_' . $sale['farm_type'];
+    $saleFarmType = $sale['farm_type'] === 'general' && $farmType !== 'all' ? $farmType : $sale['farm_type'];
+    $key = $sale['month'] . '_' . $saleFarmType;
     if (!isset($profitData[$key])) {
-        $profitData[$key] = $createDefaultRow($sale['month'], $sale['farm_type']);
+        $profitData[$key] = $createDefaultRow($sale['month'], $saleFarmType);
     }
 
     $profitData[$key]['total_sales'] += (float)$sale['total_sales'];
