@@ -28,7 +28,7 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($selectedMonth));
 }
 
-$farmType = $canChooseFarmType ? ($_GET['farm_type'] ?? 'all') : $userFarmType;
+$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false);
 $category = $_GET['category'] ?? 'all';
 
 // Build query based on filters
@@ -90,9 +90,8 @@ foreach ($expenses as $expense) {
                         <div class="d-flex gap-2 report-controls">
                             <select class="form-select" id="farmTypeFilter" style="width: 150px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option>
-                                <option value="poultry" <?php echo $farmType == 'poultry' ? 'selected' : ''; ?>>Poultry</option>
-                                <option value="ruminant" <?php echo $farmType == 'ruminant' ? 'selected' : ''; ?>>Ruminant</option>
+                                <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                                <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                                 <?php else: ?>
                                 <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?></option>
                                 <?php endif; ?>
@@ -337,9 +336,7 @@ foreach ($expenses as $expense) {
                         <div class="mb-3">
                             <label>Farm Type</label>
                             <select name="farm_type" id="editFarmType" class="form-select" required>
-                                <option value="poultry">Poultry</option>
-                                <option value="ruminant">Ruminant</option>
-                                <option value="both">Both</option>
+                                <?php foreach (allowedFarmTypes() as $type): ?><option value="<?php echo $type; ?>"><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                             </select>
                         </div>
                         <div class="mb-3">

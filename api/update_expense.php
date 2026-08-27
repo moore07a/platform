@@ -23,6 +23,9 @@ foreach ($requiredFields as $field) {
 $expenseId = $_POST['expense_id'];
 $expenseDate = $_POST['expense_date'];
 $farmType = $_POST['farm_type'];
+if (!in_array($farmType, allowedFarmTypes(), true)) {
+    send_json(['success' => false, 'error' => 'That farm type is not enabled for this farm.'], 422);
+}
 $poultryCategory = $_POST['poultry_category'] ?? null;
 $category = $_POST['category'];
 $amount = $_POST['amount'];

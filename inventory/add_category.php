@@ -19,7 +19,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $farm_type = $_POST['farm_type'] ?? 'both';
     $unit = trim($_POST['unit'] ?? '');
 
-    if ($name === '') {
+    if (!in_array($farm_type, allowedFarmTypes(), true)) {
+        $message = 'That farm type is not enabled for this farm.';
+    } elseif ($name === '') {
         $message = 'Category name is required.';
     } else {
         $stmt = $pdo->prepare("INSERT INTO inventory_categories (farm_id, category_name, farm_type, unit) VALUES (?, ?, ?, ?)");
@@ -54,9 +56,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <div class="mb-3">
         <label class="form-label">Farm Type</label>
         <select name="farm_type" class="form-select">
-          <option value="poultry">Poultry</option>
-          <option value="ruminant">Ruminant</option>
-          <option value="both" selected>Both</option>
+          <?php foreach (allowedFarmTypes() as $type): ?><option value="<?= $type ?>" <?= $type === 'both' ? 'selected' : '' ?>><?= ucfirst($type) ?></option><?php endforeach; ?>
         </select>
       </div>
       <div class="mb-3">

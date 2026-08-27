@@ -10,7 +10,7 @@ $userFarmType = getUserFarmType();
 $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 
 $year = $_GET['year'] ?? date('Y');
-$farmType = $canChooseFarmType ? ($_GET['farm_type'] ?? 'all') : $userFarmType;
+$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false);
 $startDate = $year . '-01-01';
 $endDate = $year . '-12-31';
 
@@ -266,9 +266,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
                             </select>
                             <select class="form-select" id="farmTypeFilter" style="width: 200px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option>
-                                <option value="poultry" <?php echo $farmType == 'poultry' ? 'selected' : ''; ?>>Poultry Only</option>
-                                <option value="ruminant" <?php echo $farmType == 'ruminant' ? 'selected' : ''; ?>>Ruminant Only</option>
+                                <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                                <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?> Only</option><?php endforeach; ?>
                                 <?php else: ?>
                                 <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?> Only</option>
                                 <?php endif; ?>

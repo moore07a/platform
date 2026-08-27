@@ -113,7 +113,7 @@ try {
 
             if ($cycleCode === '' || $productionType === '' || $startDate === '') {
                 $flash = ['type' => 'danger', 'message' => 'Cycle code, production type, and start date are required.'];
-            } elseif (!in_array($farmType, ['poultry', 'ruminant'], true)) {
+            } elseif (!in_array($farmType, allowedFarmTypes(false), true)) {
                 $flash = ['type' => 'danger', 'message' => 'Farm type must be poultry or ruminant.'];
             } else {
                 $pdo->beginTransaction();
@@ -403,7 +403,7 @@ try {
                             <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token(), ENT_QUOTES); ?>">
                             <input type="hidden" name="action" value="create_cycle">
                             <div class="mb-2"><label class="form-label">Cycle Code</label><input class="form-control" name="cycle_code" required></div>
-                            <div class="mb-2"><label class="form-label">Farm Type</label><select class="form-select" name="farm_type" required><option value="poultry">Poultry</option><option value="ruminant">Ruminant</option></select></div>
+                            <div class="mb-2"><label class="form-label">Farm Type</label><select class="form-select" name="farm_type" required><?php foreach (allowedFarmTypes(false) as $type): ?><option value="<?php echo $type; ?>"><?php echo ucfirst($type); ?></option><?php endforeach; ?></select></div>
                             <div class="mb-2">
                                 <label class="form-label">Production Type</label>
                                 <select class="form-select" name="production_type" id="productionType" required></select>

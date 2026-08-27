@@ -137,6 +137,31 @@ function farmHasModule(string $module): bool {
     return in_array($module, $modules, true);
 }
 
+/** Farm types enabled by the platform owner for the current farm. */
+function enabledFarmTypes(): array {
+    return array_values(array_filter(['poultry', 'ruminant'], static function (string $type): bool {
+        return farmHasModule($type);
+    }));
+}
+
+/**
+ * Values that may be stored in a Farm Type field. "Both" is meaningful only
+ * when the farm is entitled to both livestock modules.
+ */
+function allowedFarmTypes(bool $includeBoth = true): array {
+    $types = enabledFarmTypes();
+    if ($includeBoth && count($types) === 2) $types[] = 'both';
+    return $types;
+}
+
+/** Constrain a URL/form farm type to the current farm's subscriptions. */
+function normalizeFarmType(?string $farmType, bool $allowAll = false, bool $includeBoth = true): string {
+    $allowed = allowedFarmTypes($includeBoth);
+    if ($allowAll && count(enabledFarmTypes()) === 2) array_unshift($allowed, 'all');
+    if ($farmType !== null && in_array($farmType, $allowed, true)) return $farmType;
+    return $allowed[0] ?? 'all';
+}
+
 function requirePlatformOwner(): void {
     if (!isPlatformOwner()) { http_response_code(403); exit('Owner / Developer access required.'); }
 }
