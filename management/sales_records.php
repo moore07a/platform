@@ -51,7 +51,7 @@ try {
 if ($farmType === 'all') {
     $salesQuery = "SELECT s.*, u.full_name as seller
                    FROM sales_records s
-                   LEFT JOIN users u ON s.user_id = u.id
+                   LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
                    WHERE s.farm_id = ? AND s.sale_date BETWEEN ? AND ?
                    ORDER BY s.sale_date DESC";
     $salesStmt = $pdo->prepare($salesQuery);
@@ -59,7 +59,7 @@ if ($farmType === 'all') {
 } else {
     $salesQuery = "SELECT s.*, u.full_name as seller
                    FROM sales_records s
-                   LEFT JOIN users u ON s.user_id = u.id
+                   LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
                    WHERE s.farm_id = ? AND s.sale_date BETWEEN ? AND ?
                    AND s.farm_type = ?
                    ORDER BY s.sale_date DESC";
@@ -115,7 +115,7 @@ if ($debtFeatureEnabled) {
     if ($selectedCustomer !== '') {
         $ledgerStmt = $pdo->prepare("SELECT l.*, u.full_name AS recorded_by
             FROM customer_ledger_entries l
-            LEFT JOIN users u ON l.user_id = u.id
+            LEFT JOIN users u ON l.user_id = u.id AND u.farm_id = l.farm_id
             WHERE l.farm_id = ? AND l.customer_name = ?
             ORDER BY l.entry_date ASC, l.id ASC");
         $ledgerStmt->execute([$tenantFarmId, $selectedCustomer]);

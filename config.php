@@ -223,6 +223,8 @@ function getUserFarmType() {
     }
     if (hasRole('poultry_manager') && !hasRole('ruminant_manager')) return 'poultry';
     if (hasRole('ruminant_manager') && !hasRole('poultry_manager')) return 'ruminant';
+    if (farmHasModule('poultry') && !farmHasModule('ruminant')) return 'poultry';
+    if (farmHasModule('ruminant') && !farmHasModule('poultry')) return 'ruminant';
     return 'both';
 }
 

@@ -35,23 +35,33 @@ switch ($type) {
 
 function getProfitLossData($period) {
     global $pdo;
+    $farmId = requireCurrentFarmId();
     
     $dateFormat = $period == 'year' ? '%Y' : '%Y-%m';
     $limit = $period == 'year' ? 12 : 30;
     
-    $query = "SELECT 
-                DATE_FORMAT(s.sale_date, ?) as period,
-                SUM(s.total_amount) as total_sales,
-                COALESCE(SUM(e.amount), 0) as total_expenses,
-                SUM(s.total_amount) - COALESCE(SUM(e.amount), 0) as net_profit
-              FROM sales_records s
-              LEFT JOIN farm_expenses e ON DATE_FORMAT(s.sale_date, ?) = DATE_FORMAT(e.expense_date, ?)
-              WHERE s.sale_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
-              GROUP BY DATE_FORMAT(s.sale_date, ?)
+    $query = "SELECT period,
+                SUM(total_sales) AS total_sales,
+                SUM(total_expenses) AS total_expenses,
+                SUM(total_sales) - SUM(total_expenses) AS net_profit
+              FROM (
+                  SELECT DATE_FORMAT(sale_date, ?) AS period,
+                         SUM(total_amount) AS total_sales, 0 AS total_expenses
+                  FROM sales_records
+                  WHERE farm_id = ? AND sale_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+                  GROUP BY DATE_FORMAT(sale_date, ?)
+                  UNION ALL
+                  SELECT DATE_FORMAT(expense_date, ?) AS period,
+                         0 AS total_sales, SUM(amount * unit) AS total_expenses
+                  FROM farm_expenses
+                  WHERE farm_id = ? AND expense_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+                  GROUP BY DATE_FORMAT(expense_date, ?)
+              ) totals
+              GROUP BY period
               ORDER BY period";
     
     $stmt = $pdo->prepare($query);
-    $stmt->execute([$dateFormat, $dateFormat, $dateFormat, $limit, $dateFormat]);
+    $stmt->execute([$dateFormat, $farmId, $limit, $dateFormat, $dateFormat, $farmId, $limit, $dateFormat]);
     $data = $stmt->fetchAll();
     
     $labels = [];
@@ -67,6 +77,7 @@ function getProfitLossData($period) {
 
 function getSalesData($period) {
     global $pdo;
+    $farmId = requireCurrentFarmId();
     
     $dateFormat = $period == 'year' ? '%Y' : '%Y-%m';
     $limit = $period == 'year' ? 12 : 30;
@@ -76,12 +87,12 @@ function getSalesData($period) {
                 farm_type,
                 SUM(total_amount) as total_sales
               FROM sales_records
-              WHERE sale_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+              WHERE farm_id = ? AND sale_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
               GROUP BY DATE_FORMAT(sale_date, ?), farm_type
               ORDER BY period";
     
     $stmt = $pdo->prepare($query);
-    $stmt->execute([$dateFormat, $limit, $dateFormat]);
+    $stmt->execute([$dateFormat, $farmId, $limit, $dateFormat]);
     $data = $stmt->fetchAll();
     
     $labels = [];
@@ -110,6 +121,7 @@ function getSalesData($period) {
 
 function getExpenseData($period) {
     global $pdo;
+    $farmId = requireCurrentFarmId();
     
     $dateFormat = $period == 'year' ? '%Y' : '%Y-%m';
     $limit = $period == 'year' ? 12 : 30;
@@ -118,12 +130,12 @@ function getExpenseData($period) {
                 category,
                 SUM(amount * unit) as total_amount
               FROM farm_expenses
-              WHERE expense_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+              WHERE farm_id = ? AND expense_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
               GROUP BY category
               ORDER BY total_amount DESC";
     
     $stmt = $pdo->prepare($query);
-    $stmt->execute([$limit]);
+    $stmt->execute([$farmId, $limit]);
     $data = $stmt->fetchAll();
     
     $labels = [];
@@ -139,6 +151,7 @@ function getExpenseData($period) {
 
 function getStockData($period) {
     global $pdo;
+    $farmId = requireCurrentFarmId();
     
     $limit = $period == 'week' ? 7 : 30;
     
@@ -148,17 +161,18 @@ function getStockData($period) {
                 t.new_stock
               FROM stock_transactions t
               JOIN stock_items s ON t.stock_item_id = s.id
-              WHERE t.transaction_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+              WHERE t.farm_id = ? AND s.farm_id = ?
+              AND t.transaction_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
               AND t.id IN (
                   SELECT MAX(id) 
                   FROM stock_transactions 
-                  WHERE transaction_date = DATE(t.transaction_date)
+                  WHERE farm_id = ? AND transaction_date = DATE(t.transaction_date)
                   GROUP BY stock_item_id
               )
               ORDER BY t.transaction_date, s.item_name";
     
     $stmt = $pdo->prepare($query);
-    $stmt->execute([$limit]);
+    $stmt->execute([$farmId, $farmId, $limit, $farmId]);
     $data = $stmt->fetchAll();
     
     // Organize data by item
@@ -214,6 +228,7 @@ function getStockData($period) {
 
 function getProductionData($period) {
     global $pdo;
+    $farmId = requireCurrentFarmId();
     
     $limit = $period == 'month' ? 30 : 7;
     
@@ -222,11 +237,11 @@ function getProductionData($period) {
                 egg_production,
                 laying_rate
               FROM layer_daily_records
-              WHERE record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+              WHERE farm_id = ? AND record_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
               ORDER BY record_date";
     
     $stmt = $pdo->prepare($query);
-    $stmt->execute([$limit]);
+    $stmt->execute([$farmId, $limit]);
     $data = $stmt->fetchAll();
     
     $labels = [];

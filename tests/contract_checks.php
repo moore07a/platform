@@ -85,4 +85,44 @@ $getRecord = readFileOrFail($root . '/api/get_record.php');
 assertContains("'success' => true", $getRecord, "api/get_record.php should return success envelope.");
 assertContains("'data' =>", $getRecord, "api/get_record.php should return data envelope.");
 
+$chartData = readFileOrFail($root . '/api/get_chart_data.php');
+foreach (['getProfitLossData', 'getSalesData', 'getExpenseData', 'getStockData', 'getProductionData'] as $function) {
+    $start = strpos($chartData, "function {$function}");
+    $next = strpos($chartData, '\nfunction ', $start + 1);
+    $body = substr($chartData, $start, $next === false ? null : $next - $start);
+    assertContains('requireCurrentFarmId()', $body, "{$function} must scope chart data to the active farm.");
+}
+
+assertContains("checkAccess('poultry')", readFileOrFail($root . '/api/delete_record.php'), 'Record deletion must enforce module and role access.');
+assertContains('$itemFarmType', readFileOrFail($root . '/api/update_stock.php'), 'Stock updates must derive farm type from the tenant-owned item.');
+foreach (['inventory/add_category.php', 'inventory/delete_category.php'] as $relativePath) {
+    assertContains('verify_csrf_token', readFileOrFail($root . '/' . $relativePath), "{$relativePath} must enforce CSRF.");
+}
+
+$productionCycles = readFileOrFail($root . '/management/production_cycles.php');
+assertContains('water_consumption_liters, other_details', $productionCycles, 'Ruminant cycle seed must include water consumption.');
+assertContains('VALUES (?, ?, ?, ?, ?, 0, 0, 0, NULL', $productionCycles, 'Ruminant cycle seed must provide zero rather than NULL for required water consumption.');
+assertContains('$pdo->beginTransaction()', $productionCycles, 'Cycle creation and its opening record must be atomic.');
+assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutations must enforce CSRF.');
+
+$dashboard = readFileOrFail($root . '/dashboard.php');
+assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
+assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
+
+// Every specialist expense workspace must read and create records in the active tenant.
+foreach (['poultry/broiler_expenses.php', 'poultry/layer_expenses.php', 'ruminant/ruminant_expenses.php'] as $relativePath) {
+    $content = readFileOrFail($root . '/' . $relativePath);
+    assertContains('requireCurrentFarmId()', $content, "{$relativePath} must resolve the active farm.");
+    assertContains('WHERE e.farm_id = ?', $content, "{$relativePath} reads must be tenant scoped.");
+    assertContains('(farm_id, expense_date', $content, "{$relativePath} inserts must store the active farm.");
+}
+
+$inventory = readFileOrFail($root . '/inventory.php');
+assertContains('SELECT id FROM inventory_categories WHERE id = ? AND farm_id = ?', $inventory, 'Inventory must reject categories owned by another farm.');
+foreach (['UPDATE stock_items SET is_active = 0 WHERE id = ? AND farm_id = ?', 'UPDATE stock_items SET is_active = 1 WHERE id = ? AND farm_id = ?', 'DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?'] as $tenantMutation) {
+    assertContains($tenantMutation, $inventory, 'Inventory destructive mutations must include the active farm.');
+}
+
+assertContains("SELECT id FROM production_cycles WHERE id = ? AND farm_id = ? AND status = 'active'", $productionCycles, 'Stock batches must only link to an active cycle in the current farm.');
+
 echo "Contract checks passed.\n";

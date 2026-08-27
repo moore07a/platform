@@ -98,6 +98,7 @@ try {
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $cycleTableExists) {
         if (!(isPlatformOwner() || hasRole('farm_admin'))) { http_response_code(403); exit('Production-cycle management access required.'); }
+        if (!verify_csrf_token($_POST['csrf_token'] ?? '')) { http_response_code(419); exit('Invalid request token.'); }
         $action = $_POST['action'] ?? '';
 
         if ($action === 'create_cycle') {
@@ -115,6 +116,7 @@ try {
             } elseif (!in_array($farmType, ['poultry', 'ruminant'], true)) {
                 $flash = ['type' => 'danger', 'message' => 'Farm type must be poultry or ruminant.'];
             } else {
+                $pdo->beginTransaction();
                 $stmt = $pdo->prepare(
                     'INSERT INTO production_cycles
                     (farm_id, cycle_code, farm_type, production_type, status, start_date, expected_end_date, opening_headcount, notes, created_by)
@@ -169,7 +171,7 @@ try {
                     $seedStmt = $pdo->prepare(
                         'INSERT INTO ruminant_daily_records
                         (farm_id, cycle_id, record_date, animal_type, opening_stock, mortality, feed_consumption_kg, water_consumption_liters, other_details, tag_no, medications, reproduction_details, remarks, user_id)
-                        VALUES (?, ?, ?, ?, ?, 0, 0, NULL, NULL, NULL, NULL, NULL, ?, ?)'
+                        VALUES (?, ?, ?, ?, ?, 0, 0, 0, NULL, NULL, NULL, NULL, ?, ?)'
                     );
                     $seedStmt->execute([
                         $tenantFarmId,
@@ -181,6 +183,7 @@ try {
                         $_SESSION['user_id'] ?? null,
                     ]);
                 }
+                $pdo->commit();
                 $flash = ['type' => 'success', 'message' => 'Production cycle created successfully.'];
             }
         }
@@ -198,24 +201,30 @@ try {
             if ($cycleId <= 0 || $itemDescription === '' || $quantity <= 0 || $receivedDate === '') {
                 $flash = ['type' => 'danger', 'message' => 'Cycle, item description, quantity, and received date are required for stock batch.'];
             } else {
-                $stmt = $pdo->prepare(
-                    'INSERT INTO stock_batches
-                    (farm_id, cycle_id, batch_code, item_description, quantity, unit_cost, supplier_name, received_date, notes, created_by)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-                );
-                $stmt->execute([
-                    $tenantFarmId,
-                    $cycleId,
-                    ($batchCode !== '' ? $batchCode : null),
-                    $itemDescription,
-                    $quantity,
-                    $unitCost,
-                    ($supplierName !== '' ? $supplierName : null),
-                    $receivedDate,
-                    ($notes !== '' ? $notes : null),
-                    $_SESSION['user_id'] ?? null,
-                ]);
-                $flash = ['type' => 'success', 'message' => 'Stock batch posted and linked to the selected active cycle.'];
+                $cycleOwnerStmt = $pdo->prepare("SELECT id FROM production_cycles WHERE id = ? AND farm_id = ? AND status = 'active'");
+                $cycleOwnerStmt->execute([$cycleId, $tenantFarmId]);
+                if (!$cycleOwnerStmt->fetchColumn()) {
+                    $flash = ['type' => 'danger', 'message' => 'The selected active cycle does not belong to this farm.'];
+                } else {
+                    $stmt = $pdo->prepare(
+                        'INSERT INTO stock_batches
+                        (farm_id, cycle_id, batch_code, item_description, quantity, unit_cost, supplier_name, received_date, notes, created_by)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+                    );
+                    $stmt->execute([
+                        $tenantFarmId,
+                        $cycleId,
+                        ($batchCode !== '' ? $batchCode : null),
+                        $itemDescription,
+                        $quantity,
+                        $unitCost,
+                        ($supplierName !== '' ? $supplierName : null),
+                        $receivedDate,
+                        ($notes !== '' ? $notes : null),
+                        $_SESSION['user_id'] ?? null,
+                    ]);
+                    $flash = ['type' => 'success', 'message' => 'Stock batch posted and linked to the selected active cycle.'];
+                }
             }
         }
 
@@ -327,6 +336,9 @@ try {
         }
     }
 } catch (Throwable $exception) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     $errorMessage = $exception->getMessage();
 }
 ?>
@@ -388,6 +400,7 @@ try {
                     <div class="card-header"><strong>Create Cycle</strong></div>
                     <div class="card-body">
                         <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token(), ENT_QUOTES); ?>">
                             <input type="hidden" name="action" value="create_cycle">
                             <div class="mb-2"><label class="form-label">Cycle Code</label><input class="form-control" name="cycle_code" required></div>
                             <div class="mb-2"><label class="form-label">Farm Type</label><select class="form-select" name="farm_type" required><option value="poultry">Poultry</option><option value="ruminant">Ruminant</option></select></div>
@@ -411,6 +424,7 @@ try {
                     <div class="card-header"><strong>Close Cycle</strong></div>
                     <div class="card-body">
                         <form method="post">
+                            <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars(csrf_token(), ENT_QUOTES); ?>">
                             <input type="hidden" name="action" value="close_cycle">
                             <div class="mb-2"><label class="form-label">Active Cycle</label>
                                 <select class="form-select" name="cycle_id" required>

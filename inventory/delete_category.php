@@ -13,6 +13,10 @@ $message = '';
 $farmId = requireCurrentFarmId();
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!verify_csrf_token($_POST['csrf_token'] ?? '')) {
+        http_response_code(419);
+        exit('Invalid request token.');
+    }
     $categoryId = (int)($_POST['category_id'] ?? 0);
 
     if ($categoryId <= 0) {
@@ -28,12 +32,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             // Delete any transactions tied to those items first to satisfy FK constraints
             if (!empty($items)) {
-                $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ?');
-                $deleteItem = $pdo->prepare('DELETE FROM stock_items WHERE id = ?');
+                $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?');
+                $deleteItem = $pdo->prepare('DELETE FROM stock_items WHERE id = ? AND farm_id = ?');
 
                 foreach ($items as $item) {
-                    $deleteTrans->execute([$item['id']]);
-                    $deleteItem->execute([$item['id']]);
+                    $deleteTrans->execute([$item['id'], $farmId]);
+                    $deleteItem->execute([$item['id'], $farmId]);
                 }
             }
 
@@ -74,6 +78,7 @@ $categories = $categoriesStmt->fetchAll();
     <?php endif; ?>
 
     <form method="post">
+      <input type="hidden" name="csrf_token" value="<?= htmlspecialchars(csrf_token(), ENT_QUOTES) ?>" />
       <div class="mb-3">
         <label class="form-label">Select Category to Delete</label>
         <select name="category_id" class="form-select" required>

@@ -180,12 +180,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $items = $itemStmt->fetchAll();
 
             if (!empty($items)) {
-                $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ?');
-                $deleteItem = $pdo->prepare('DELETE FROM stock_items WHERE id = ?');
+                $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?');
+                $deleteItem = $pdo->prepare('DELETE FROM stock_items WHERE id = ? AND farm_id = ?');
 
                 foreach ($items as $itemRow) {
-                    $deleteTrans->execute([$itemRow['id']]);
-                    $deleteItem->execute([$itemRow['id']]);
+                    $deleteTrans->execute([$itemRow['id'], $currentFarmId]);
+                    $deleteItem->execute([$itemRow['id'], $currentFarmId]);
                 }
             }
 
@@ -226,13 +226,22 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $farmType = 'poultry';
         }
 
+        $categoryId = (int)($_POST['category_id'] ?? 0);
+        $categoryStmt = $pdo->prepare('SELECT id FROM inventory_categories WHERE id = ? AND farm_id = ?');
+        $categoryStmt->execute([$categoryId, $currentFarmId]);
+        if (!$categoryStmt->fetchColumn()) {
+            $_SESSION['error'] = 'The selected category does not belong to this farm.';
+            header('Location: inventory.php');
+            exit();
+        }
+
         $stmt = $pdo->prepare("INSERT INTO stock_items
             (farm_id, item_name, category_id, current_stock, min_stock_level, unit, farm_type, feed_category, unit_cost)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
         $stmt->execute([
             $currentFarmId, $_POST['item_name'],
-            $_POST['category_id'],
+            $categoryId,
             $_POST['initial_stock'],
             $_POST['min_stock'],
             $_POST['unit'],
@@ -333,17 +342,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $itemId = $_POST['item_id'];
         
         // Check if item has transactions
-        $checkStmt = $pdo->prepare("SELECT COUNT(*) FROM stock_transactions WHERE stock_item_id = ?");
-        $checkStmt->execute([$itemId]);
+        $checkStmt = $pdo->prepare("SELECT COUNT(*) FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?");
+        $checkStmt->execute([$itemId, $currentFarmId]);
         $hasTransactions = $checkStmt->fetchColumn() > 0;
 
         if ($hasTransactions) {
-            $stmt = $pdo->prepare("UPDATE stock_items SET is_active = 0 WHERE id = ?");
-            $stmt->execute([$itemId]);
+            $stmt = $pdo->prepare("UPDATE stock_items SET is_active = 0 WHERE id = ? AND farm_id = ?");
+            $stmt->execute([$itemId, $currentFarmId]);
             $_SESSION['success'] = "Item deactivated successfully. Transaction history preserved.";
         } else {
-            $stmt = $pdo->prepare("DELETE FROM stock_items WHERE id = ?");
-            $stmt->execute([$itemId]);
+            $stmt = $pdo->prepare("DELETE FROM stock_items WHERE id = ? AND farm_id = ?");
+            $stmt->execute([$itemId, $currentFarmId]);
             $_SESSION['success'] = "Item deleted successfully!";
         }
         
@@ -360,8 +369,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $itemId = $_POST['item_id'];
 
-        $stmt = $pdo->prepare("UPDATE stock_items SET is_active = 1 WHERE id = ?");
-        $stmt->execute([$itemId]);
+        $stmt = $pdo->prepare("UPDATE stock_items SET is_active = 1 WHERE id = ? AND farm_id = ?");
+        $stmt->execute([$itemId, $currentFarmId]);
 
         $_SESSION['success'] = "Item restored successfully.";
         header('Location: inventory.php');
@@ -381,11 +390,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $pdo->beginTransaction();
 
             // Always clear related transactions so the item can be removed cleanly
-            $deleteTransactions = $pdo->prepare("DELETE FROM stock_transactions WHERE stock_item_id = ?");
-            $deleteTransactions->execute([$itemId]);
+            $deleteTransactions = $pdo->prepare("DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?");
+            $deleteTransactions->execute([$itemId, $currentFarmId]);
 
-            $deleteItem = $pdo->prepare("DELETE FROM stock_items WHERE id = ?");
-            $deleteItem->execute([$itemId]);
+            $deleteItem = $pdo->prepare("DELETE FROM stock_items WHERE id = ? AND farm_id = ?");
+            $deleteItem->execute([$itemId, $currentFarmId]);
 
             $pdo->commit();
 

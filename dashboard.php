@@ -15,21 +15,10 @@ require_once(__DIR__ . '/includes/functions.php');
 requireLogin();
 
 $userType = getUserType();
-if (isPlatformOwner() || hasRole('farm_admin')) {
-    $farmAccess = getUserFarmType();
-    $farmAccessLabel = $farmAccess;
-    if ($farmAccess === 'all') {
-        $farmAccess = 'both';
-    }
-} elseif (hasRole('poultry_manager')) {
-    $farmAccess = 'poultry';
-    $farmAccessLabel = 'poultry';
-} elseif (hasRole('sales_rep')) {
+$farmAccess = getUserFarmType();
+$farmAccessLabel = hasRole('sales_rep') ? 'sales' : $farmAccess;
+if ($farmAccess === 'all') {
     $farmAccess = 'both';
-    $farmAccessLabel = 'sales';
-} else {
-    $farmAccess = 'ruminant';
-    $farmAccessLabel = 'ruminant';
 }
 
 // Get current stock levels
@@ -1240,7 +1229,7 @@ $pageTitle = "Dashboard";
         </div>
         
         <!-- Dashboard Statistics -->
-        <?php if (!hasRole('sales_rep') && in_array($farmAccess, ['poultry', 'ruminant', 'both'])): ?>
+        <?php if (in_array($farmAccess, ['poultry', 'ruminant', 'both'], true)): ?>
         <div class="livestock-ticker-section mb-4">
             <div class="livestock-ticker-row">
                 <div class="livestock-ticker-track">
