@@ -20,8 +20,9 @@ $farmAccessLabel = hasRole('sales_rep') ? 'sales' : $farmAccess;
 if ($farmAccess === 'all') {
     $farmAccess = 'both';
 }
-$includeGeneralSales = farmHasModule('sales')
-    && in_array($farmAccess, ['poultry', 'ruminant'], true);
+// General sales are a durable, neutral classification. Keep them visible in a
+// single-livestock dashboard even if the farm's Sales module is later disabled.
+$includeGeneralSales = in_array($farmAccess, ['poultry', 'ruminant'], true);
 
 // Get current stock levels
 $tenantFarmId = requireCurrentFarmId();

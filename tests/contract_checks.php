@@ -134,6 +134,7 @@ assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutatio
 
 $dashboard = readFileOrFail($root . '/dashboard.php');
 assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
+assertContains("\$includeGeneralSales = in_array(\$farmAccess, ['poultry', 'ruminant'], true);", $dashboard, 'Single-module dashboards must retain neutral sales after the Sales module is disabled.');
 assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
 assertContains("? \"(s.farm_type = ? OR s.farm_type = 'general')\"", $dashboard, 'Single-module dashboards must show neutral sales in recent sales.');
 assertContains("? \" AND (farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard profit fallback must include neutral sales.');
