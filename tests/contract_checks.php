@@ -65,6 +65,8 @@ assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 
 $analyticsReport = readFileOrFail($root . '/management/reports.php');
 assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
 assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Sales-only analytics must select the neutral general scope.');
+assertContains("if (\$farmType === '' || \$salesOnlyScope)", $analyticsReport, 'Sales-only analytics must not deduct livestock expenses.');
+assertContains("if (\$salesOnlyScope) {\n    \$expenseQuery .= \" AND 1 = 0\";", $analyticsReport, 'Sales-only expense breakdowns must be empty.');
 $combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
 assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
 assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
@@ -133,6 +135,9 @@ assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutatio
 $dashboard = readFileOrFail($root . '/dashboard.php');
 assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
 assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
+assertContains("? \"(s.farm_type = ? OR s.farm_type = 'general')\"", $dashboard, 'Single-module dashboards must show neutral sales in recent sales.');
+assertContains("? \" AND (farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard profit fallback must include neutral sales.');
+assertContains("? \"(farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard activity must include neutral sales.');
 
 // Every specialist expense workspace must read and create records in the active tenant.
 foreach (['poultry/broiler_expenses.php', 'poultry/layer_expenses.php', 'ruminant/ruminant_expenses.php'] as $relativePath) {

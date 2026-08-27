@@ -20,6 +20,8 @@ $farmAccessLabel = hasRole('sales_rep') ? 'sales' : $farmAccess;
 if ($farmAccess === 'all') {
     $farmAccess = 'both';
 }
+$includeGeneralSales = farmHasModule('sales')
+    && in_array($farmAccess, ['poultry', 'ruminant'], true);
 
 // Get current stock levels
 $tenantFarmId = requireCurrentFarmId();
@@ -84,10 +86,13 @@ if ($farmAccess === 'both') {
     $salesStmt = $pdo->prepare($salesQuery);
     $salesStmt->execute([$tenantFarmId]);
 } else {
+    $salesFarmTypePredicate = $includeGeneralSales
+        ? "(s.farm_type = ? OR s.farm_type = 'general')"
+        : 's.farm_type = ?';
     $salesQuery = "SELECT s.*, u.full_name as seller
                    FROM sales_records s
                    LEFT JOIN users u ON s.user_id = u.id AND u.farm_id = s.farm_id
-                   WHERE s.farm_id = ? AND s.farm_type = ?
+                   WHERE s.farm_id = ? AND {$salesFarmTypePredicate}
                    ORDER BY s.sale_date DESC, s.id DESC
                    LIMIT 5";
     $salesStmt = $pdo->prepare($salesQuery);
@@ -300,7 +305,9 @@ if (!$profitData || $profitData['net_profit'] === null) {
     $expenseParams = [$tenantFarmId, $monthStart, $monthEnd];
 
     if ($farmAccess !== 'both') {
-        $salesSql .= " AND farm_type = ?";
+        $salesSql .= $includeGeneralSales
+            ? " AND (farm_type = ? OR farm_type = 'general')"
+            : " AND farm_type = ?";
         $expenseSql .= " AND farm_type = ?";
         $salesParams[] = $farmAccess;
         $expenseParams[] = $farmAccess;
@@ -357,6 +364,9 @@ if ($farmAccess === 'both') {
         $tenantFarmId, $today
     ]);
 } else {
+    $activitySalesFarmTypePredicate = $includeGeneralSales
+        ? "(farm_type = ? OR farm_type = 'general')"
+        : 'farm_type = ?';
     $activityQuery = "SELECT COUNT(*) as activity_count FROM (
                       SELECT id FROM stock_transactions WHERE farm_id = ? AND farm_type = ? AND transaction_date = ?
                       UNION ALL
@@ -368,7 +378,7 @@ if ($farmAccess === 'both') {
                       UNION ALL
                       SELECT id FROM farm_expenses WHERE farm_id = ? AND farm_type = ? AND expense_date = ?
                       UNION ALL
-                      SELECT id FROM sales_records WHERE farm_id = ? AND farm_type = ? AND sale_date = ?
+                      SELECT id FROM sales_records WHERE farm_id = ? AND {$activitySalesFarmTypePredicate} AND sale_date = ?
                       ) as activities";
     $activityStmt = $pdo->prepare($activityQuery);
     $activityStmt->execute([

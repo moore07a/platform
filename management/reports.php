@@ -49,7 +49,7 @@ $expenseQuery = "SELECT DATE_FORMAT(expense_date, '%Y-%m') AS month, farm_type, 
                  WHERE farm_id = ? AND expense_date BETWEEN ? AND ?";
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType === '') {
+if ($farmType === '' || $salesOnlyScope) {
     $expenseQuery .= " AND 1 = 0";
 } elseif ($farmType !== 'all') {
     $expenseQuery .= " AND (farm_type = ? OR farm_type = 'both')";
@@ -151,7 +151,9 @@ $expenseQuery = "SELECT category, SUM(amount * unit) as total_amount
                  WHERE farm_id = ? AND expense_date BETWEEN ? AND ?";
 $expenseParams = [$tenantFarmId, $startDate, $endDate];
 
-if ($farmType !== 'all') {
+if ($salesOnlyScope) {
+    $expenseQuery .= " AND 1 = 0";
+} elseif ($farmType !== 'all') {
     $expenseQuery .= " AND (farm_type = ? OR farm_type = 'both')";
     $expenseParams[] = $farmType;
 }
