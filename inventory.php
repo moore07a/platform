@@ -216,8 +216,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $feedCategory = $_POST['feed_category'] ?? 'general';
         $farmType = $_POST['farm_type'];
 
-        if (!in_array($feedCategory, ['general', 'layer', 'broiler', 'ruminant'], true)) {
-            $feedCategory = 'general';
+        if (!in_array($feedCategory, allowedFeedCategories(), true)) {
+            $_SESSION['error'] = "That feed type is not enabled for this farm.";
+            header('Location: inventory.php');
+            exit();
         }
 
         if ($feedCategory === 'ruminant') {
@@ -1060,10 +1062,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                 <div class="col-md-12 mb-3">
                                     <label>Feed Type</label>
                                     <select name="feed_category" class="form-select">
-                                        <option value="general">General / Not a feed</option>
-                                        <option value="layer">Layer Feeds</option>
-                                        <option value="broiler">Broiler Feeds</option>
-                                        <option value="ruminant">Ruminant Feeds</option>
+                                        <?php
+                                        $feedCategoryLabels = [
+                                            'general' => 'General / Not a feed',
+                                            'layer' => 'Layer Feeds',
+                                            'broiler' => 'Broiler Feeds',
+                                            'ruminant' => 'Ruminant Feeds',
+                                        ];
+                                        foreach (allowedFeedCategories() as $category):
+                                        ?>
+                                            <option value="<?php echo $category; ?>"><?php echo $feedCategoryLabels[$category]; ?></option>
+                                        <?php endforeach; ?>
                                     </select>
                                 </div>
                             </div>

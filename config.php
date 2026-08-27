@@ -156,6 +156,17 @@ function allowedFarmTypes(bool $includeBoth = true): array {
     return $types;
 }
 
+/** Feed classifications available under the current farm's subscriptions. */
+function allowedFeedCategories(): array {
+    $categories = ['general'];
+    if (farmHasModule('poultry')) {
+        $categories[] = 'layer';
+        $categories[] = 'broiler';
+    }
+    if (farmHasModule('ruminant')) $categories[] = 'ruminant';
+    return $categories;
+}
+
 /**
  * Sales can have a durable neutral classification independent of livestock
  * module entitlements. Keep it available whenever the sales module is enabled
