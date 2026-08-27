@@ -23,7 +23,10 @@ if ($farmAccess === 'all') {
 // General sales are a durable, neutral classification, but only an active
 // livestock scope may inherit them. A stale specialist role must not expose
 // neutral sales after that livestock module has been disabled for the farm.
-$includeGeneralSales = in_array($farmAccess, enabledFarmTypes(), true);
+// The combined scope inherits them when both livestock modules and Sales are
+// enabled, just as each enabled individual livestock scope does.
+$includeGeneralSales = in_array($farmAccess, enabledFarmTypes(), true)
+    || ($farmAccess === 'both' && count(enabledFarmTypes()) === 2 && farmHasModule('sales'));
 
 // Get current stock levels
 $tenantFarmId = requireCurrentFarmId();

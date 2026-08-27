@@ -19,7 +19,9 @@ if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
 
 // Sales-only farms have no livestock scope to normalize, but their neutral
 // general sales must remain available to the analytics dashboard and export.
-$salesOnlyScope = enabledFarmTypes() === [] && farmHasModule('sales');
+$salesOnlyScope = enabledFarmTypes() === []
+    && farmHasModule('sales')
+    && (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'));
 $farmType = $salesOnlyScope
     ? 'general'
     : normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);

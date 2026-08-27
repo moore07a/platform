@@ -32,7 +32,9 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($month));
 }
 
-$salesOnlyScope = enabledFarmTypes() === [] && farmHasModule('sales');
+$salesOnlyScope = enabledFarmTypes() === []
+    && farmHasModule('sales')
+    && (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'));
 // A sales-only workspace has no livestock scope to normalize. Use the neutral
 // classification explicitly so its ledger can see general sales without also
 // exposing historical poultry or ruminant records.

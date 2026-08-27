@@ -59,12 +59,14 @@ $salesReport = readFileOrFail($root . '/management/sales_records.php');
 assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
 assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
 assertContains("s.farm_type = ? OR s.farm_type = 'general'", $salesReport, 'Module-filtered sales must retain neutral sales records.');
-assertContains("\$salesOnlyScope\n    ? 'general'", $salesReport, 'Sales-only workspaces must select the neutral sales scope.');
+assertContains("&& (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'))", $salesReport, 'Sales-only workspaces must reject stale livestock-only roles.');
+assertContains("\$salesOnlyScope\n    ? 'general'", $salesReport, 'Authorized sales-only workspaces must select the neutral sales scope.');
 assertContains('option value="general" selected>All Sales', $salesReport, 'The sales-only filter must preserve its neutral scope after redirects.');
 assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $salesReport, 'Dual-module sales readers must receive the combined report scope.');
 $analyticsReport = readFileOrFail($root . '/management/reports.php');
 assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $analyticsReport, 'Dual-module analytics readers must receive the combined report scope.');
-assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Sales-only analytics must select the neutral general scope.');
+assertContains("&& (isPlatformOwner() || hasRole('farm_admin', 'sales_rep', 'viewer'))", $analyticsReport, 'Sales-only analytics must reject stale livestock-only roles.');
+assertContains("\$salesOnlyScope\n    ? 'general'", $analyticsReport, 'Authorized sales-only analytics must select the neutral general scope.');
 assertContains("if (\$farmType === '' || \$salesOnlyScope)", $analyticsReport, 'Sales-only analytics must not deduct livestock expenses.');
 assertContains("if (\$farmType === '' || \$salesOnlyScope) {\n    \$expenseQuery .= \" AND 1 = 0\";", $analyticsReport, 'Empty and sales-only expense breakdown scopes must be empty.');
 $combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
@@ -134,7 +136,7 @@ assertContains('verify_csrf_token', $productionCycles, 'Production-cycle mutatio
 
 $dashboard = readFileOrFail($root . '/dashboard.php');
 assertContains('$farmAccess = getUserFarmType();', $dashboard, 'Dashboard module visibility must use the shared farm-access resolver for every role.');
-assertContains('$includeGeneralSales = in_array($farmAccess, enabledFarmTypes(), true);', $dashboard, 'Dashboard neutral sales must require an enabled livestock scope.');
+assertContains("\$farmAccess === 'both' && count(enabledFarmTypes()) === 2 && farmHasModule('sales')", $dashboard, 'Combined dashboards must include neutral sales when both livestock modules and Sales are enabled.');
 assertContains("if (in_array(\$farmAccess, ['poultry', 'ruminant', 'both'], true))", $dashboard, 'Active-cycle ticker must be available to all entitled dashboard roles.');
 assertContains("? \"(s.farm_type = ? OR s.farm_type = 'general')\"", $dashboard, 'Single-module dashboards must show neutral sales in recent sales.');
 assertContains("? \" AND (farm_type = ? OR farm_type = 'general')\"", $dashboard, 'Single-module dashboard profit fallback must include neutral sales.');
