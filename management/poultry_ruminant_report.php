@@ -12,7 +12,13 @@ $canChooseFarmType = isPlatformOwner() || hasRole('farm_admin', 'sales_rep');
 $reportMode = $_GET['report_mode'] ?? 'monthly';
 $month = $_GET['month'] ?? date('Y-m');
 $year = $_GET['year'] ?? date('Y');
-$farmType = normalizeFarmType($canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType, true, false, $canChooseFarmType);
+$requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
+// getUserFarmType() represents dual-module viewer access as "both", while
+// reports represent that same authorized combined scope as "all".
+if (!$canChooseFarmType && $requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+    $requestedFarmType = 'all';
+}
+$farmType = normalizeFarmType($requestedFarmType, true, false, $canChooseFarmType);
 $visibleFarmTypes = $farmType === 'all' ? enabledFarmTypes() : [$farmType];
 
 if ($reportMode === 'yearly') {

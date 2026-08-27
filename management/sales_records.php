@@ -32,7 +32,13 @@ if ($reportMode === 'yearly') {
     $periodLabel = date('F Y', strtotime($month));
 }
 
-$farmType = normalizeFarmType($farmType ?? ($_GET['farm_type'] ?? null), true, false, $canChooseFarmType);
+$salesOnlyScope = enabledFarmTypes() === [] && farmHasModule('sales');
+// A sales-only workspace has no livestock scope to normalize. Use the neutral
+// classification explicitly so its ledger can see general sales without also
+// exposing historical poultry or ruminant records.
+$farmType = $salesOnlyScope
+    ? 'general'
+    : normalizeFarmType($farmType ?? ($_GET['farm_type'] ?? null), true, false, $canChooseFarmType);
 $showActions = isPlatformOwner() || hasRole('farm_admin');
 // Sales entitlement enables a separate Sales Representative account; farm admins
 // retain operational entry rights in their own workspace. Viewers are read-only.
@@ -488,7 +494,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <div class="d-flex gap-2 report-controls">
                             <select class="form-select" id="farmTypeFilter" style="width: 150px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <?php if (count(enabledFarmTypes()) === 0): ?><option value="all" selected>All Sales</option><?php endif; ?>
+                                <?php if ($salesOnlyScope): ?><option value="general" selected>All Sales</option><?php endif; ?>
                                 <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
                                 <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?></option><?php endforeach; ?>
                                 <?php else: ?>

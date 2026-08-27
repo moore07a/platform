@@ -58,9 +58,12 @@ $salesReport = readFileOrFail($root . '/management/sales_records.php');
 assertContains('$saleFarmTypes = allowedSalesFarmTypes()', $salesReport, 'Sales controls must support sales-only farms.');
 assertContains('in_array($saleFarmType, $saleFarmTypes, true)', $salesReport, 'Sales mutations must validate against sales-compatible farm types.');
 assertContains("s.farm_type = ? OR s.farm_type = 'general'", $salesReport, 'Module-filtered sales must retain neutral sales records.');
+assertContains("\$salesOnlyScope\n    ? 'general'", $salesReport, 'Sales-only workspaces must select the neutral sales scope.');
+assertContains('option value="general" selected>All Sales', $salesReport, 'The sales-only filter must preserve its neutral scope after redirects.');
 $combinedReport = readFileOrFail($root . '/management/poultry_ruminant_report.php');
 assertContains('$farmType === \'all\' && isset($salesSummary[\'general\'])', $combinedReport, 'Combined livestock reports must display general sales.');
 assertContains('General Sales', $combinedReport, 'Combined livestock reports must label the general sales total.');
+assertContains("\$requestedFarmType === 'both' && count(enabledFarmTypes()) === 2", $combinedReport, 'Dual-module viewers must receive the authorized combined report scope.');
 
 $generalSalesMigration = readFileOrFail($root . '/migrations/010_general_sales_farm_type.sql');
 assertContains("'general'", $generalSalesMigration, 'The sales schema must support durable neutral records.');
