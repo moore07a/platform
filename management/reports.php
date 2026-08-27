@@ -13,7 +13,7 @@ $year = $_GET['year'] ?? date('Y');
 $requestedFarmType = $canChooseFarmType ? ($_GET['farm_type'] ?? null) : $userFarmType;
 // User access represents a dual-module assignment as "both", while report
 // filters represent the same combined read scope as "all".
-if ($requestedFarmType === 'both' && count(enabledFarmTypes()) === 2) {
+if ($requestedFarmType === 'both' && count(accessibleFarmTypes()) === 2) {
     $requestedFarmType = 'all';
 }
 
@@ -287,8 +287,8 @@ if (isset($_GET['export']) && $_GET['export'] === 'excel') {
                             </select>
                             <select class="form-select" id="farmTypeFilter" style="width: 200px;">
                                 <?php if ($canChooseFarmType): ?>
-                                <?php if (count(enabledFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
-                                <?php foreach (enabledFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?> Only</option><?php endforeach; ?>
+                                <?php if (count(accessibleFarmTypes()) === 2): ?><option value="all" <?php echo $farmType == 'all' ? 'selected' : ''; ?>>All Farms</option><?php endif; ?>
+                                <?php foreach (accessibleFarmTypes() as $type): ?><option value="<?php echo $type; ?>" <?php echo $farmType === $type ? 'selected' : ''; ?>><?php echo ucfirst($type); ?> Only</option><?php endforeach; ?>
                                 <?php else: ?>
                                 <option value="<?php echo $farmType; ?>" selected><?php echo ucfirst($farmType); ?> Only</option>
                                 <?php endif; ?>
