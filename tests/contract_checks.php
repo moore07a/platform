@@ -173,5 +173,16 @@ assertContains('function findFarmAdminId', $farmsPage, 'Farm editing must recove
 assertContains("INSERT INTO users (farm_id, username, password, email, user_type, full_name)", $farmsPage, 'Editing an incomplete farm must be able to create its missing admin.');
 assertContains('Incomplete farm cleanup failed', $farmsPage, 'Failed provisioning must perform compensating cleanup on non-transactional databases.');
 assertContains('This farm was only partially created and has no admin account.', $farmsPage, 'Incomplete farms must show actionable repair guidance.');
+assertContains('function ensureTenantRoles', $farmsPage, 'Farm provisioning must repair missing canonical tenant roles.');
+assertContains('function validSubscriptionDate', $farmsPage, 'Farm provisioning must validate real subscription dates.');
+assertContains('$endDate < $startDate', $farmsPage, 'Farm provisioning must reject an end date before its start date.');
+
+$roleRepairMigration = readFileOrFail($root . '/migrations/011_repair_access_roles.sql');
+assertContains("('farm_admin', 'Admin / Farm Owner', 0)", $roleRepairMigration, 'Role repair must restore farm_admin.');
+assertContains("u.user_type IN ('platform_owner', 'platform_admin')", $roleRepairMigration, 'Role repair must preserve legacy platform owners.');
+assertContains("u.user_type IN ('farm_admin', 'owner', 'admin')", $roleRepairMigration, 'Role repair must preserve legacy farm owners.');
+assertContains("r.code IN ('platform_owner', 'platform_admin')", $login, 'Platform login must accept legacy owner roles.');
+assertNotContains('INSERT IGNORE INTO user_roles', $login, 'Signing in must not modify authorization tables; migrations own role repair.');
+assertContains("u.user_type IN ('platform_owner', 'platform_admin') OR r.code IN ('platform_owner', 'platform_admin')", $config, 'Session validation must keep legacy platform owners signed in until migration repair runs.');
 
 echo "Contract checks passed.\n";

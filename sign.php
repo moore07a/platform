@@ -52,7 +52,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                LEFT JOIN user_roles ur ON ur.user_id = u.id
                                LEFT JOIN roles r ON r.id = ur.role_id
                                WHERE u.username = ?
-                                 AND (u.user_type = 'platform_owner' OR r.code = 'platform_owner')
+                                 AND (u.user_type IN ('platform_owner', 'platform_admin') OR r.code IN ('platform_owner', 'platform_admin'))
                                GROUP BY u.id
                                LIMIT 1");
         $stmt->execute([$username]);

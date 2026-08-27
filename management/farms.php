@@ -11,6 +11,10 @@ $moduleRoles = ['poultry_manager' => 'poultry', 'ruminant_manager' => 'ruminant'
 
 function redirectFarms(): void { header('Location: ' . BASE_URL . '/management/farms.php'); exit(); }
 function validFarmId($value): int { return filter_var($value, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) ?: 0; }
+function validSubscriptionDate(string $value): bool {
+    $date = DateTimeImmutable::createFromFormat('!Y-m-d', $value);
+    return $date !== false && $date->format('Y-m-d') === $value;
+}
 function editableFarm(PDO $pdo, int $farmId): ?array {
     $stmt = $pdo->prepare("SELECT * FROM farms WHERE id = ? AND slug <> ? LIMIT 1");
     $stmt->execute([$farmId, PLATFORM_WORKSPACE_SLUG]);
@@ -42,6 +46,11 @@ function saveFarmLogoUpload(?array $file, int $farmId, ?string $existing = null,
 function selectedRoles(array $input): array {
     global $roleLabels;
     return array_values(array_unique(array_intersect($input, array_keys($roleLabels))));
+}
+function ensureTenantRoles(PDO $pdo): void {
+    global $roleLabels;
+    $stmt = $pdo->prepare('INSERT INTO roles (code, name, is_platform_role) VALUES (?, ?, 0) ON DUPLICATE KEY UPDATE name = VALUES(name), is_platform_role = 0');
+    foreach ($roleLabels as $code => $name) $stmt->execute([$code, $name]);
 }
 function saveModulesAndRoles(PDO $pdo, int $farmId, int $ownerId, array $roles): void {
     global $moduleRoles;
@@ -98,12 +107,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $name = trim($_POST['name'] ?? ''); $slug = strtolower(trim($_POST['slug'] ?? '')); $color = trim($_POST['primary_color'] ?? '#198754');
     $roles = selectedRoles($_POST['roles'] ?? []); $username = trim($_POST['owner_username'] ?? ''); $password = $_POST['owner_password'] ?? ''; $email = trim($_POST['owner_email'] ?? '');
     $startDate = trim($_POST['subscription_starts_at'] ?? ''); $endDate = trim($_POST['subscription_ends_at'] ?? '');
+    $plan = $_POST['plan'] ?? 'starter'; $status = $_POST['status'] ?? 'trial';
     $repairOwnerNeeded = isset($_POST['update_farm']) && $farmId > 0 && findFarmAdminId($pdo, $farmId) === 0;
     if ($name === '' || !preg_match('/^[a-z0-9]+(?:-[a-z0-9]+)*$/', $slug) || $slug === PLATFORM_WORKSPACE_SLUG || !preg_match('/^#[0-9a-fA-F]{6}$/', $color) || $username === '' || !in_array('farm_admin', $roles, true)) {
         $error = 'Enter farm details, select Admin / Farm Owner, and use a unique lowercase Farm Workspace ID.';
     } elseif (count(selectedModulesFromRoles($roles)) < 1) $error = 'Select at least one subscribed access module (Poultry, Ruminant, or Sales) so the farm dashboard can load active statistics.';
     elseif ($email !== '' && !filter_var($email, FILTER_VALIDATE_EMAIL)) $error = 'Enter a valid owner email address.';
-    elseif (($startDate !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDate)) || ($endDate !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDate))) $error = 'Subscription dates must be valid dates.';
+    elseif (!in_array($plan, ['starter', 'growth', 'pro'], true) || !in_array($status, ['trial', 'active', 'past_due', 'suspended'], true)) $error = 'Select a valid subscription plan and status.';
+    elseif (($startDate !== '' && !validSubscriptionDate($startDate)) || ($endDate !== '' && !validSubscriptionDate($endDate))) $error = 'Subscription dates must be valid dates.';
+    elseif ($startDate !== '' && $endDate !== '' && $endDate < $startDate) $error = 'Subscription end date cannot be before its start date.';
     elseif (isset($_POST['create_farm']) && strlen($password) < FARM_OWNER_MIN_PASSWORD_LENGTH) $error = 'The owner password must be at least ' . FARM_OWNER_MIN_PASSWORD_LENGTH . ' characters.';
     elseif ($repairOwnerNeeded && strlen($password) < FARM_OWNER_MIN_PASSWORD_LENGTH) $error = 'This incomplete farm has no admin account. Enter a password of at least ' . FARM_OWNER_MIN_PASSWORD_LENGTH . ' characters to create its admin account while saving.';
     elseif (isset($_POST['update_farm']) && $password !== '' && strlen($password) < FARM_OWNER_MIN_PASSWORD_LENGTH) $error = 'A replacement password must be at least ' . FARM_OWNER_MIN_PASSWORD_LENGTH . ' characters.';
@@ -112,9 +124,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $createdFarmId = 0;
         $newLogoPath = null;
         $pdo->beginTransaction();
+        ensureTenantRoles($pdo);
         if (isset($_POST['create_farm'])) {
             $stmt = $pdo->prepare('INSERT INTO farms (name, slug, primary_color, contact_name, contact_email, subscription_plan, subscription_status, subscription_starts_at, subscription_ends_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
-            $stmt->execute([$name, $slug, $color, trim($_POST['contact_name'] ?? ''), trim($_POST['contact_email'] ?? ''), $_POST['plan'] ?? 'starter', $_POST['status'] ?? 'trial', $startDate ? "$startDate 00:00:00" : null, $endDate ? "$endDate 23:59:59" : null]);
+            $stmt->execute([$name, $slug, $color, trim($_POST['contact_name'] ?? ''), trim($_POST['contact_email'] ?? ''), $plan, $status, $startDate ? "$startDate 00:00:00" : null, $endDate ? "$endDate 23:59:59" : null]);
             $farmId = (int)$pdo->lastInsertId(); $createdFarmId = $farmId; $logoPath = saveFarmLogoUpload($_FILES['logo'] ?? null, $farmId, null, $logoExtension); $newLogoPath = $logoPath;
             if ($logoPath) $pdo->prepare('UPDATE farms SET logo_path = ? WHERE id = ?')->execute([$logoPath, $farmId]);
             $owner = $pdo->prepare('INSERT INTO users (farm_id, username, password, email, user_type, full_name) VALUES (?, ?, ?, ?, ?, ?)');
@@ -129,7 +142,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $ownerId = (int)$pdo->lastInsertId();
             }
             $logoPath = saveFarmLogoUpload($_FILES['logo'] ?? null, $farmId, $farm['logo_path'], $logoExtension); $newLogoPath = ($logoPath !== ($farm['logo_path'] ?? null)) ? $logoPath : null;
-            $pdo->prepare('UPDATE farms SET name = ?, slug = ?, primary_color = ?, contact_name = ?, contact_email = ?, subscription_plan = ?, subscription_status = ?, subscription_starts_at = ?, subscription_ends_at = ?, logo_path = ? WHERE id = ?')->execute([$name, $slug, $color, trim($_POST['contact_name'] ?? ''), trim($_POST['contact_email'] ?? ''), $_POST['plan'] ?? 'starter', $_POST['status'] ?? 'trial', $startDate ? "$startDate 00:00:00" : null, $endDate ? "$endDate 23:59:59" : null, $logoPath, $farmId]);
+            $pdo->prepare('UPDATE farms SET name = ?, slug = ?, primary_color = ?, contact_name = ?, contact_email = ?, subscription_plan = ?, subscription_status = ?, subscription_starts_at = ?, subscription_ends_at = ?, logo_path = ? WHERE id = ?')->execute([$name, $slug, $color, trim($_POST['contact_name'] ?? ''), trim($_POST['contact_email'] ?? ''), $plan, $status, $startDate ? "$startDate 00:00:00" : null, $endDate ? "$endDate 23:59:59" : null, $logoPath, $farmId]);
             $ownerSql = 'UPDATE users SET username = ?, email = ?, full_name = ?, user_type = ?' . ($password !== '' ? ', password = ?' : '') . ' WHERE id = ? AND farm_id = ?'; $params = [$username, $email, trim($_POST['owner_name'] ?? $username), 'farm_admin']; if ($password !== '') $params[] = password_hash($password, PASSWORD_DEFAULT); $params[] = $ownerId; $params[] = $farmId; $pdo->prepare($ownerSql)->execute($params);
             saveModulesAndRoles($pdo, $farmId, $ownerId, $roles); $message = "Updated {$name}.";
         } else throw new RuntimeException('Unknown farm action.');

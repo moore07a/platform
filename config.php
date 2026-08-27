@@ -116,7 +116,9 @@ function hasRole(string ...$requiredRoles): bool {
 }
 
 function isPlatformOwner(): bool {
-    return hasRole('platform_owner');
+    // platform_admin remains accepted until a legacy account signs in and is
+    // backfilled with the canonical platform_owner role.
+    return hasRole('platform_owner', 'platform_admin');
 }
 
 function isPlatformAdmin(): bool {
@@ -205,7 +207,7 @@ function requireLogin() {
     global $pdo;
     if ($pdo instanceof PDO && isset($_SESSION['user_id'])) {
         $stmt = $pdo->prepare("SELECT u.id, f.subscription_status,
-                                      MAX(CASE WHEN r.code = 'platform_owner' THEN 1 ELSE 0 END) AS is_platform_owner
+                                      MAX(CASE WHEN u.user_type IN ('platform_owner', 'platform_admin') OR r.code IN ('platform_owner', 'platform_admin') THEN 1 ELSE 0 END) AS is_platform_owner
                                FROM users u
                                INNER JOIN farms f ON f.id = u.farm_id
                                LEFT JOIN user_roles ur ON ur.user_id = u.id
