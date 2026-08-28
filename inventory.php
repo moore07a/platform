@@ -205,7 +205,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             }
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
-            $_SESSION['error'] = $e->getMessage();
+            if ($e instanceof PDOException) {
+                error_log('Inventory database operation failed: ' . $e->getMessage());
+                $_SESSION['error'] = 'The inventory operation could not be completed. Please try again.';
+            } else {
+                $_SESSION['error'] = $e->getMessage();
+            }
         }
 
         header('Location: inventory.php');
@@ -362,7 +367,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         }
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
-            $_SESSION['error'] = $e->getMessage();
+            if ($e instanceof PDOException) {
+                error_log('Inventory database operation failed: ' . $e->getMessage());
+                $_SESSION['error'] = 'The inventory operation could not be completed. Please try again.';
+            } else {
+                $_SESSION['error'] = $e->getMessage();
+            }
         }
         header('Location: inventory.php');
         exit();
@@ -440,7 +450,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $_SESSION['success'] = "Item and its history permanently deleted.";
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
-            $_SESSION['error'] = $e->getMessage();
+            if ($e instanceof PDOException) {
+                error_log('Inventory database operation failed: ' . $e->getMessage());
+                $_SESSION['error'] = 'The inventory operation could not be completed. Please try again.';
+            } else {
+                $_SESSION['error'] = $e->getMessage();
+            }
         }
 
         header('Location: inventory.php');

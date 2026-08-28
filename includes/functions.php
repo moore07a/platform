@@ -230,22 +230,48 @@ function syncDailyFeedConsumption(PDO $pdo, int $farmId, ?int $oldTransactionId,
         throw new RuntimeException('Feed consumption must be a non-negative number.');
     }
     $affectedItems = [];
+    $oldTransaction = null;
     if ($oldTransactionId) {
-        $oldStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND transaction_type = 'used' FOR UPDATE");
+        // Discover the old item without taking a movement lock, then lock every
+        // involved stock row in numeric order. All feed-sync paths consequently
+        // acquire item locks before movement locks and cannot form a lock cycle.
+        $oldStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND transaction_type = 'used'");
         $oldStmt->execute([$oldTransactionId, $farmId]);
         $oldTransaction = $oldStmt->fetch(PDO::FETCH_ASSOC);
         if (!$oldTransaction) {
             throw new RuntimeException('The previous feed stock movement could not be found.');
         }
+    }
 
-        $oldItemStmt = $pdo->prepare('SELECT current_stock FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE');
-        $oldItemStmt->execute([$oldTransaction['stock_item_id'], $farmId]);
-        $oldStock = $oldItemStmt->fetchColumn();
-        if ($oldStock === false) {
+    $itemIds = [];
+    if ($oldTransaction) $itemIds[] = (int)$oldTransaction['stock_item_id'];
+    if ($quantity > 0 && $feedItemId > 0) $itemIds[] = $feedItemId;
+    $itemIds = array_values(array_unique($itemIds));
+    sort($itemIds, SORT_NUMERIC);
+    $lockedItems = [];
+    $lockItemStmt = $pdo->prepare('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE');
+    foreach ($itemIds as $itemId) {
+        $lockItemStmt->execute([$itemId, $farmId]);
+        $lockedItem = $lockItemStmt->fetch(PDO::FETCH_ASSOC);
+        if ($lockedItem) $lockedItems[$itemId] = $lockedItem;
+    }
+
+    if ($oldTransaction) {
+        $oldStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND transaction_type = 'used' FOR UPDATE");
+        $oldStmt->execute([$oldTransactionId, $farmId]);
+        $lockedOldTransaction = $oldStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$lockedOldTransaction || (int)$lockedOldTransaction['stock_item_id'] !== (int)$oldTransaction['stock_item_id']) {
+            throw new RuntimeException('The previous feed stock movement could not be found.');
+        }
+        $oldTransaction = $lockedOldTransaction;
+        $oldItemId = (int)$oldTransaction['stock_item_id'];
+        if (!isset($lockedItems[$oldItemId])) {
             throw new RuntimeException('The previously selected feed item could not be found.');
         }
+        $oldStock = (float)$lockedItems[$oldItemId]['current_stock'];
         $pdo->prepare('UPDATE stock_items SET current_stock = ? WHERE id = ? AND farm_id = ?')
-            ->execute([(float)$oldStock + (float)$oldTransaction['quantity'], $oldTransaction['stock_item_id'], $farmId]);
+            ->execute([$oldStock + (float)$oldTransaction['quantity'], $oldItemId, $farmId]);
+        $lockedItems[$oldItemId]['current_stock'] = $oldStock + (float)$oldTransaction['quantity'];
         // The daily row owns this generated movement through a restrictive foreign
         // key. Detach it inside the caller's transaction before replacing/deleting it.
         detachDailyFeedTransaction($pdo, $farmId, $oldTransactionId);
@@ -261,10 +287,8 @@ function syncDailyFeedConsumption(PDO $pdo, int $farmId, ?int $oldTransactionId,
         throw new RuntimeException('Select the feed item used for this consumption.');
     }
 
-    $itemStmt = $pdo->prepare('SELECT id, current_stock, unit, farm_type, is_active FROM stock_items WHERE id = ? AND farm_id = ? AND feed_category = ? FOR UPDATE');
-    $itemStmt->execute([$feedItemId, $farmId, $feedCategory]);
-    $item = $itemStmt->fetch(PDO::FETCH_ASSOC);
-    if (!$item) {
+    $item = $lockedItems[$feedItemId] ?? null;
+    if (!$item || $item['feed_category'] !== $feedCategory) {
         throw new RuntimeException('The selected feed item is not available for this record type.');
     }
     $reusingInactiveItem = $oldTransactionId && isset($oldTransaction) && (int)$oldTransaction['stock_item_id'] === $feedItemId;

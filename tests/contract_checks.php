@@ -129,6 +129,9 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
     assertContains('data-feed-item-id=', $dailyRecord, "{$dailyPage} edit controls must retain the linked feed item.");
     assertContains("feedItemId: '#feedItemId'", $dailyRecord, "{$dailyPage} edit modal must prefill the linked feed item.");
     assertContains('$linkedFeedItemId = $movementId ? $feedItemId : null;', $dailyRecord, "{$dailyPage} must not retain an inventory link for zero consumption.");
+    assertContains("\$parsedRecordDate > new DateTimeImmutable('today')", $dailyRecord, "{$dailyPage} must reject future record dates server-side.");
+    assertContains('id="selectedDate" max="<?php echo date(\'Y-m-d\'); ?>"', $dailyRecord, "{$dailyPage} must prevent future record dates in the form.");
+    assertContains("document.getElementById('feedItemId').required = parseFloat(document.getElementById('feedConsumption').value) > 0;", $dailyRecord, "{$dailyPage} must reset the conditional feed-item requirement.");
     assertTrue(
         strpos($dailyRecord, '$pdo->beginTransaction()') < strpos($dailyRecord, '$checkStmt->execute($checkParams)'),
         "{$dailyPage} must begin its transaction before looking up an existing daily record."
@@ -140,6 +143,12 @@ assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lo
 assertContains('stockTransactionHasDailyFeedLinks', $inventoryFunctions, 'Ledger mutations must be able to identify daily-record-managed movements.');
 assertContains('detachDailyFeedTransaction', $inventoryFunctions, 'Generated movements must be detached from daily records before restrictive deletion.');
 assertContains('would make stock negative on its transaction date', $inventoryFunctions, 'Backdated movements must not create a negative historical balance.');
+assertTrue(
+    strpos($inventoryFunctions, "SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE") < strpos($inventoryFunctions, "transaction_type = 'used' FOR UPDATE"),
+    'Daily feed synchronization must lock stock items before generated movements.'
+);
+assertContains("error_log('Inventory database operation failed: '", $inventory, 'Inventory database failures must be logged server-side.');
+assertContains("\$e instanceof PDOException", $inventory, 'Inventory database failures must be replaced with a safe user-facing message.');
 foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/ruminant_feeds_record.php'] as $feedLedgerPage) {
     $feedLedger = readFileOrFail($root . '/' . $feedLedgerPage);
     assertContains('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE', $feedLedger, "{$feedLedgerPage} must lock stock before adding a movement.");

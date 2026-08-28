@@ -244,6 +244,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         if (!is_numeric($feedQuantityRaw) || !is_finite($feedQuantity) || $feedQuantity < 0) {
             throw new RuntimeException('Feed consumption must be a non-negative number.');
         }
+        $parsedRecordDate = DateTimeImmutable::createFromFormat('!Y-m-d', $recordDate);
+        $recordDateErrors = DateTimeImmutable::getLastErrors();
+        if (!$parsedRecordDate || ($recordDateErrors !== false && ($recordDateErrors['warning_count'] > 0 || $recordDateErrors['error_count'] > 0))) {
+            throw new RuntimeException('Please select a valid record date.');
+        }
+        if ($parsedRecordDate > new DateTimeImmutable('today')) {
+            throw new RuntimeException('Daily records cannot be dated in the future.');
+        }
         $pdo->beginTransaction();
         // Lock the record before reading its linked movement so concurrent edits serialize.
         $checkSql = "SELECT id, feed_item_id, feed_consumption_kg, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
@@ -740,7 +748,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label>Date</label>
-                                <input type="date" class="form-control" id="selectedDate"
+                                <input type="date" class="form-control" id="selectedDate" max="<?php echo date('Y-m-d'); ?>"
                                        onchange="checkExistingRecord()" required>
                             </div>
                             <div class="col-md-6 mb-3">
@@ -1043,6 +1051,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         unlockOpeningStock();
         document.getElementById('recordForm').reset();
         document.getElementById('mortality').value = 0;
+        document.getElementById('feedItemId').required = parseFloat(document.getElementById('feedConsumption').value) > 0;
         document.getElementById('recordDate').value = document.getElementById('selectedDate').value;
         document.getElementById('animalTypeHidden').value = document.getElementById('animalType').value;
     }
@@ -1076,6 +1085,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         },
         onShow: ({ modalElement, data }) => {
             modalElement.querySelector('#modalTitle').textContent = 'Edit Record';
+            modalElement.querySelector('#feedItemId').required = parseFloat(modalElement.querySelector('#feedConsumption').value) > 0;
             modalElement.querySelector('#animalType').disabled = true;
             modalElement.querySelector('#animalTypeHidden').value = data.animalType || '';
         }
