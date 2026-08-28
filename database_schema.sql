@@ -169,7 +169,11 @@ CREATE TABLE layer_daily_records (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_layer_cycle_record (cycle_id, record_date),
     INDEX idx_layer_cycle_date (cycle_id, record_date),
+    INDEX idx_layer_feed_item (feed_item_id),
+    INDEX idx_layer_feed_transaction (feed_stock_transaction_id),
     FOREIGN KEY (cycle_id) REFERENCES production_cycles(id) ON DELETE SET NULL,
+    CONSTRAINT fk_layer_feed_item FOREIGN KEY (feed_item_id) REFERENCES stock_items(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_layer_feed_transaction FOREIGN KEY (feed_stock_transaction_id) REFERENCES stock_transactions(id) ON DELETE RESTRICT,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -190,7 +194,11 @@ CREATE TABLE broiler_daily_records (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_broiler_cycle_record (cycle_id, record_date),
     INDEX idx_broiler_cycle_date (cycle_id, record_date),
+    INDEX idx_broiler_feed_item (feed_item_id),
+    INDEX idx_broiler_feed_transaction (feed_stock_transaction_id),
     FOREIGN KEY (cycle_id) REFERENCES production_cycles(id) ON DELETE SET NULL,
+    CONSTRAINT fk_broiler_feed_item FOREIGN KEY (feed_item_id) REFERENCES stock_items(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_broiler_feed_transaction FOREIGN KEY (feed_stock_transaction_id) REFERENCES stock_transactions(id) ON DELETE RESTRICT,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
@@ -214,7 +222,11 @@ CREATE TABLE ruminant_daily_records (
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_ruminant_cycle_animal (record_date, animal_type, cycle_id),
     INDEX idx_ruminant_cycle_date (cycle_id, record_date),
+    INDEX idx_ruminant_feed_item (feed_item_id),
+    INDEX idx_ruminant_feed_transaction (feed_stock_transaction_id),
     FOREIGN KEY (cycle_id) REFERENCES production_cycles(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ruminant_feed_item FOREIGN KEY (feed_item_id) REFERENCES stock_items(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_ruminant_feed_transaction FOREIGN KEY (feed_stock_transaction_id) REFERENCES stock_transactions(id) ON DELETE RESTRICT,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 

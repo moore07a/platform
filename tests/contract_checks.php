@@ -112,6 +112,8 @@ assertContains('INSERT INTO stock_items', $inventory, 'Inventory must create sto
 assertContains('(farm_id, item_name, category_id', $inventory, 'New stock items must be assigned to the active farm.');
 assertContains('name="initial_stock_date"', $inventory, 'New inventory items must provide a calendar date for their opening stock.');
 assertContains("createFromFormat('!Y-m-d', \$initialStockDate)", $inventory, 'The opening stock date must be validated on the server.');
+assertContains("\$parsedInitialStockDate > new DateTimeImmutable('today')", $inventory, 'Opening stock must not be dated in the future.');
+assertContains('max="<?php echo date(\'Y-m-d\'); ?>"', $inventory, 'The opening-stock date input must not offer future dates.');
 assertContains("\$parsedInitialStockDate->format('Y-m-d')", $inventory, 'The selected opening stock date must be used by the initial stock transaction.');
 
 foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_record.php' => 'broiler', 'ruminant/ruminant_daily_record.php' => 'ruminant'] as $dailyPage => $feedCategory) {
@@ -176,6 +178,15 @@ assertContains('$itemFarmType', readFileOrFail($root . '/api/update_stock.php'),
 foreach (['inventory/add_category.php', 'inventory/delete_category.php'] as $relativePath) {
     assertContains('verify_csrf_token', readFileOrFail($root . '/' . $relativePath), "{$relativePath} must enforce CSRF.");
 }
+assertContains('inventoryItemHasDailyFeedLinks(', readFileOrFail($root . '/inventory/delete_category.php'), 'The standalone category deletion route must preserve daily feed links.');
+
+$baseSchema = readFileOrFail($root . '/database_schema.sql');
+foreach (['layer', 'broiler', 'ruminant'] as $recordType) {
+    assertContains("fk_{$recordType}_feed_item", $baseSchema, "The base schema must constrain {$recordType} feed item links.");
+    assertContains("fk_{$recordType}_feed_transaction", $baseSchema, "The base schema must constrain {$recordType} feed transaction links.");
+}
+$feedLinkMigration = readFileOrFail($root . '/migrations/012_daily_feed_inventory_links.sql');
+assertTrue(substr_count($feedLinkMigration, 'ALTER TABLE') >= 15, 'Feed-link migration operations must be split so duplicate columns do not skip indexes or constraints.');
 
 $productionCycles = readFileOrFail($root . '/management/production_cycles.php');
 assertContains('water_consumption_liters, other_details', $productionCycles, 'Ruminant cycle seed must include water consumption.');

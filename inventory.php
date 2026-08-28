@@ -230,6 +230,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         }
 
+        if ($parsedInitialStockDate > new DateTimeImmutable('today')) {
+            $_SESSION['error'] = "Initial stock date cannot be in the future.";
+            header('Location: inventory.php');
+            exit();
+        }
+
         if (!in_array($feedCategory, allowedFeedCategories(), true)) {
             $_SESSION['error'] = "That feed type is not enabled for this farm.";
             header('Location: inventory.php');
@@ -1106,7 +1112,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                 <div class="col-md-4 mb-3">
                                     <label for="initialStockDate">Initial Stock Date</label>
                                     <input type="date" name="initial_stock_date" id="initialStockDate" class="form-control"
-                                           value="<?php echo date('Y-m-d'); ?>" required>
+                                           value="<?php echo date('Y-m-d'); ?>" max="<?php echo date('Y-m-d'); ?>" required>
                                     <small class="text-muted">Choose the date this opening stock was received.</small>
                                 </div>
                                 <div class="col-md-4 mb-3">

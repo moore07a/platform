@@ -30,6 +30,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $itemStmt->execute([$categoryId, $farmId]);
             $items = $itemStmt->fetchAll();
 
+            foreach ($items as $item) {
+                if (inventoryItemHasDailyFeedLinks($pdo, $farmId, (int)$item['id'])) {
+                    throw new RuntimeException('This category contains feed used by daily records. Remove those records before deleting the category.');
+                }
+            }
+
             // Delete any transactions tied to those items first to satisfy FK constraints
             if (!empty($items)) {
                 $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?');
@@ -52,9 +58,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $itemNames = array_column($items, 'item_name');
                 $message .= ' Removed related items: ' . implode(', ', $itemNames);
             }
-        } catch (PDOException $e) {
-            $pdo->rollBack();
-            $message = 'Could not delete category. It may be in use.';
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $message = $e instanceof RuntimeException
+                ? $e->getMessage()
+                : 'Could not delete category. It may be in use.';
         }
     }
 }
