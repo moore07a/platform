@@ -239,6 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $feedQuantityRaw = $parseNumeric($_POST['feed_consumption'] ?? 0);
     $feedQuantity = (float)$feedQuantityRaw;
     $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
+    $recordId = (int)($_POST['record_id'] ?? 0);
 
     try {
         if (!is_numeric($feedQuantityRaw) || !is_finite($feedQuantity) || $feedQuantity < 0) {
@@ -254,16 +255,27 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         }
         $pdo->beginTransaction();
         // Lock the record before reading its linked movement so concurrent edits serialize.
-        $checkSql = "SELECT id, feed_item_id, feed_consumption_kg, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
-        $checkParams = [$tenantFarmId, $recordDate, $animalType];
-        if ($cycleEnabled && $selectedCycleId > 0) {
-            $checkSql .= " AND cycle_id = ?";
-            $checkParams[] = $selectedCycleId;
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_kg, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ?";
+        $checkParams = [$tenantFarmId];
+        if ($recordId > 0) {
+            $checkSql .= " AND id = ?";
+            $checkParams[] = $recordId;
+        } else {
+            $checkSql .= " AND record_date = ? AND LOWER(animal_type) = ?";
+            $checkParams[] = $recordDate;
+            $checkParams[] = $animalType;
+            if ($cycleEnabled && $selectedCycleId > 0) {
+                $checkSql .= " AND cycle_id = ?";
+                $checkParams[] = $selectedCycleId;
+            }
         }
         $checkSql .= " FOR UPDATE";
         $checkStmt = $pdo->prepare($checkSql);
         $checkStmt->execute($checkParams);
         $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
+        if ($recordId > 0 && !$existingRecord) {
+            throw new RuntimeException('The selected daily record could not be found.');
+        }
 
         $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_kg'] === $feedQuantity && $feedItemId === 0)
             ? null
@@ -317,9 +329,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
 
         $pdo->commit();
         $_SESSION['success'] = "Ruminant daily record saved successfully!";
-    } catch (Throwable $e) {
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unable to save ruminant daily record: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to save the daily record. Please try again.';
+    } catch (RuntimeException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         $_SESSION['error'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unable to save ruminant daily record: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to save the daily record. Please try again.';
     }
     header("Location: ruminant_daily_record.php?month=" . $month . "&cycle_id=" . (int)$selectedCycleId);
     exit();
@@ -676,6 +696,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                       <div class="d-flex flex-wrap gap-2">
                                                           <button class="btn btn-sm btn-outline-primary edit-record-btn"
                                                                   title="Edit Record"
+                                                                  data-record-id="<?php echo (int)$record['id']; ?>"
                                                                   data-record-date="<?php echo htmlspecialchars($record['record_date']); ?>"
                                                                   data-selected-date="<?php echo htmlspecialchars($record['record_date']); ?>"
                                                                   data-animal-type="<?php echo htmlspecialchars($record['animal_type']); ?>"
@@ -739,6 +760,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                     </div>
                     <div class="modal-body">
                         <input type="hidden" name="record_date" id="recordDate">
+                        <input type="hidden" name="record_id" id="recordId" value="0">
                         <input type="hidden" name="animal_type" id="animalTypeHidden">
 
                         <div class="row">
@@ -1065,6 +1087,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         buttonSelector: '.edit-record-btn',
         modalSelector: '#recordModal',
         fieldMap: {
+            recordId: '#recordId',
             recordDate: '#recordDate',
             selectedDate: '#selectedDate',
             animalType: '#animalType',

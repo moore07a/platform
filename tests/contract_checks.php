@@ -262,6 +262,23 @@ foreach (['UPDATE stock_items SET is_active = 0 WHERE id = ? AND farm_id = ?', '
 
 assertContains("SELECT id FROM production_cycles WHERE id = ? AND farm_id = ? AND status = 'active'", $productionCycles, 'Stock batches must only link to an active cycle in the current farm.');
 
+foreach ([
+    'poultry/layers_daily_record.php',
+    'poultry/broiler_daily_record.php',
+    'ruminant/ruminant_daily_record.php',
+] as $relativePath) {
+    $dailyRecordPage = readFileOrFail($root . '/' . $relativePath);
+    assertContains('name="record_id" id="recordId" value="0"', $dailyRecordPage, "{$relativePath} must submit the clicked record identity.");
+    assertContains('data-record-id=', $dailyRecordPage, "{$relativePath} edit controls must carry the clicked record identity.");
+    assertContains("recordId: '#recordId'", $dailyRecordPage, "{$relativePath} edit modal must populate the clicked record identity.");
+    assertContains('if ($recordId > 0)', $dailyRecordPage, "{$relativePath} must lock edits by record identity.");
+    assertTrue(
+        strpos($dailyRecordPage, 'catch (PDOException $e)') < strpos($dailyRecordPage, 'catch (RuntimeException $e)'),
+        "{$relativePath} must sanitize database exceptions before handling validation errors."
+    );
+    assertContains("Unable to save the daily record. Please try again.", $dailyRecordPage, "{$relativePath} must show a generic database error.");
+}
+
 $farmsPage = readFileOrFail($root . '/management/farms.php');
 assertContains('function detectFarmLogoExtension', $farmsPage, 'Farm logos must be validated before provisioning begins.');
 assertContains('function findFarmAdminId', $farmsPage, 'Farm editing must recover legacy or partially-created admin users.');
