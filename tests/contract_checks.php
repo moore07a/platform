@@ -118,6 +118,8 @@ assertContains('Insufficient', $feedInventory, 'Automatic consumption must rejec
 foreach (['poultry/layers_daily_record.php', 'poultry/broiler_daily_record.php', 'ruminant/ruminant_daily_record.php'] as $dailyRecordPath) {
     $dailyRecord = readFileOrFail($root . '/' . $dailyRecordPath);
     assertContains('name="feed_stock_item_id"', $dailyRecord, "{$dailyRecordPath} must let the user select consumed feed inventory.");
+    assertContains("if (\$cycleEnabled && \$selectedCycleId === 0)", $dailyRecord, "{$dailyRecordPath} must reject aggregate-view saves that cannot be synchronized to one record.");
+    assertContains('Select a production cycle before saving a daily record.', $dailyRecord, "{$dailyRecordPath} must explain how to enter an editable cycle scope.");
     assertContains('syncFeedConsumptionInventory(', $dailyRecord, "{$dailyRecordPath} must synchronize consumption with inventory.");
     assertContains('$pdo->beginTransaction()', $dailyRecord, "{$dailyRecordPath} must save records and inventory atomically.");
 }

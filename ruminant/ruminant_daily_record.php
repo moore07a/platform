@@ -241,6 +241,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $feedStockItemId = !empty($_POST['feed_stock_item_id']) ? (int)$_POST['feed_stock_item_id'] : null;
 
     try {
+    if ($cycleEnabled && $selectedCycleId === 0) {
+        throw new RuntimeException('Select a production cycle before saving a daily record.');
+    }
     $pdo->beginTransaction();
     // Check if record exists for this date and animal type
     $checkSql = "SELECT id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";

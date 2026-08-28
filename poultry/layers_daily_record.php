@@ -116,6 +116,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $feedStockItemId = !empty($_POST['feed_stock_item_id']) ? (int)$_POST['feed_stock_item_id'] : null;
 
         try {
+        if ($cycleEnabled && $selectedCycleId === 0) {
+            throw new RuntimeException('Select a production cycle before saving a daily record.');
+        }
         $pdo->beginTransaction();
         // Check if record exists
         $checkSql = "SELECT id FROM layer_daily_records WHERE farm_id = ? AND record_date = ?";
