@@ -17,6 +17,9 @@ $selectedCycleId = isset($_GET['cycle_id']) ? (int)$_GET['cycle_id'] : 0;
 $monthSelectorDate = date('Y-m-d', strtotime($yearMonth . '-' . min((int)date('d'), (int)date('t', strtotime($yearMonth . '-01')))));
 
 $tenantFarmId = requireCurrentFarmId();
+$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit, is_active FROM stock_items WHERE farm_id = ? AND feed_category = 'layer' AND LOWER(TRIM(unit)) IN ('bag', 'bags') AND (is_active = 1 OR id IN (SELECT feed_item_id FROM layer_daily_records WHERE farm_id = ? AND feed_stock_transaction_id IS NOT NULL)) ORDER BY is_active DESC, item_name");
+$feedItemsStmt->execute([$tenantFarmId, $tenantFarmId]);
+$feedItems = $feedItemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
 $activeCycles = [];
 if ($cycleEnabled) {
@@ -98,80 +101,81 @@ if ($recordCount > 0) {
 }
 
 // Handle form submission
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    if (isset($_POST['save_record'])) {
-        $parseNumeric = static function ($value) {
-            return str_replace(',', '', trim((string)$value));
-        };
-        $recordDate = $_POST['record_date'];
-        $eggProduction = (float) $parseNumeric($_POST['egg_production'] ?? 0);
-        $calculatedCrates = round($eggProduction / 30, 2);
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
+    $parseNumeric = static function ($value) { return str_replace(',', '', trim((string)$value)); };
+    $recordDate = $_POST['record_date'];
+    $feedQuantityRaw = $parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedQuantity = (float)$feedQuantityRaw;
+    $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
+    $recordId = (int)($_POST['record_id'] ?? 0);
+    $eggProduction = (float)$parseNumeric($_POST['egg_production'] ?? 0);
+    $calculatedCrates = round($eggProduction / 30, 2);
 
-        // Check if record exists
-        $checkSql = "SELECT id FROM layer_daily_records WHERE farm_id = ? AND record_date = ?";
-        $checkParams = [$tenantFarmId, $recordDate];
-        if ($cycleEnabled && $selectedCycleId > 0) {
-            $checkSql .= " AND cycle_id = ?";
-            $checkParams[] = $selectedCycleId;
+    try {
+        if (!is_numeric($feedQuantityRaw) || !is_finite($feedQuantity) || $feedQuantity < 0) {
+            throw new RuntimeException('Feed consumption must be a non-negative number.');
         }
+        $parsedRecordDate = DateTimeImmutable::createFromFormat('!Y-m-d', $recordDate);
+        $recordDateErrors = DateTimeImmutable::getLastErrors();
+        if (!$parsedRecordDate || ($recordDateErrors !== false && ($recordDateErrors['warning_count'] > 0 || $recordDateErrors['error_count'] > 0))) {
+            throw new RuntimeException('Please select a valid record date.');
+        }
+        if ($parsedRecordDate > new DateTimeImmutable('today')) {
+            throw new RuntimeException('Daily records cannot be dated in the future.');
+        }
+        $pdo->beginTransaction();
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_bags, feed_stock_transaction_id FROM layer_daily_records WHERE farm_id = ?";
+        $checkParams = [$tenantFarmId];
+        if ($recordId > 0) {
+            $checkSql .= " AND id = ?";
+            $checkParams[] = $recordId;
+        } else {
+            $checkSql .= " AND record_date = ?";
+            $checkParams[] = $recordDate;
+            if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
+        }
+        $checkSql .= " FOR UPDATE";
         $checkStmt = $pdo->prepare($checkSql);
         $checkStmt->execute($checkParams);
-
-        if ($checkStmt->fetch()) {
-            // Update existing record
-            $stmt = $pdo->prepare("UPDATE layer_daily_records SET
-                opening_stock = ?, mortality = ?, feed_consumption_bags = ?,
-                water_consumption_liters = ?, medications = ?, egg_production = ?,
-                crates_count = ?, laying_rate = ?, birds_age = ?, remarks = ?
-                WHERE farm_id = ? AND record_date = ?" . (($cycleEnabled && $selectedCycleId > 0) ? " AND cycle_id = ?" : ""));
-            $updateParams = [
-                $parseNumeric($_POST['opening_stock']),
-                $parseNumeric($_POST['mortality']),
-                $parseNumeric($_POST['feed_consumption']),
-                $parseNumeric($_POST['water_consumption']),
-                $_POST['medications'],
-                $eggProduction,
-                $calculatedCrates,
-                $parseNumeric($_POST['laying_rate']),
-                $parseNumeric($_POST['birds_age']),
-                $_POST['remarks'],
-                $tenantFarmId,
-                $recordDate
-            ];
-            if ($cycleEnabled && $selectedCycleId > 0) {
-                $updateParams[] = $selectedCycleId;
-            }
-            $stmt->execute($updateParams);
-        } else {
-            // Insert new record
-            $stmt = $pdo->prepare("INSERT INTO layer_daily_records
-                (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags,
-                 water_consumption_liters, medications, egg_production,
-                 crates_count, laying_rate, birds_age, remarks, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $tenantFarmId,
-                ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null,
-                $recordDate,
-                $parseNumeric($_POST['opening_stock']),
-                $parseNumeric($_POST['mortality']),
-                $parseNumeric($_POST['feed_consumption']),
-                $parseNumeric($_POST['water_consumption']),
-                $_POST['medications'],
-                $eggProduction,
-                $calculatedCrates,
-                $parseNumeric($_POST['laying_rate']),
-                $parseNumeric($_POST['birds_age']),
-                $_POST['remarks'],
-                $_SESSION['user_id']
-            ]);
+        $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
+        if ($recordId > 0 && !$existingRecord) {
+            throw new RuntimeException('The selected daily record could not be found.');
         }
 
+        $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_bags'] === $feedQuantity && $feedItemId === 0)
+            ? null
+            : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'layer', 'bags', $_SESSION['user_id'] ?? null);
+        $linkedFeedItemId = $movementId ? $feedItemId : null;
+        if ($existingRecord) {
+            $stmt = $pdo->prepare("UPDATE layer_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
+                water_consumption_liters = ?, medications = ?, egg_production = ?, crates_count = ?, laying_rate = ?, birds_age = ?, remarks = ? WHERE id = ? AND farm_id = ?");
+            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
+                $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
+                $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $existingRecord['id'], $tenantFarmId]);
+        } else {
+            $stmt = $pdo->prepare("INSERT INTO layer_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, egg_production, crates_count, laying_rate, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$tenantFarmId, ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null, $recordDate,
+                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
+                $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
+                $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $_SESSION['user_id']]);
+        }
+        $pdo->commit();
         $_SESSION['success'] = "Daily record saved successfully!";
-        $redirectMonth = date('Y-m', strtotime($recordDate));
-        header("Location: layers_daily_record.php?month=" . $redirectMonth . "&cycle_id=" . (int)$selectedCycleId);
-        exit();
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unable to save layer daily record: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to save the daily record. Please try again.';
+    } catch (RuntimeException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $_SESSION['error'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unable to save layer daily record: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to save the daily record. Please try again.';
     }
+    $redirectMonth = date('Y-m', strtotime($recordDate));
+    header("Location: layers_daily_record.php?month=" . $redirectMonth . "&cycle_id=" . (int)$selectedCycleId);
+    exit();
 }
 ?>
 <!DOCTYPE html>
@@ -184,6 +188,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 </head>
 <body class="poultry-page">
     <?php include(__DIR__ . '/../navbar.php'); ?>
+    <?php if (isset($_SESSION['error'])): ?>
+        <div class="container-fluid mt-3"><div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div></div>
+    <?php endif; ?>
 
     <div class="container-fluid mt-4 poultry-shell">
         <?php if (isset($_SESSION['success'])): ?>
@@ -389,6 +399,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                                     data-egg-production="<?php echo htmlspecialchars($record['egg_production']); ?>"
                                                     data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                     data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                    data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                     data-crates-count="<?php echo htmlspecialchars($record['crates_count']); ?>"
                                                     data-laying-rate="<?php echo htmlspecialchars($record['laying_rate']); ?>"
                                                     data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
@@ -498,6 +509,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                                   <td>
                                                       <button class="btn btn-sm btn-outline-primary edit-record-btn"
                                                               title="Edit Record"
+                                                              data-record-id="<?php echo (int)$record['id']; ?>"
                                                               data-record-date="<?php echo htmlspecialchars($record['record_date']); ?>"
                                                               data-selected-date="<?php echo htmlspecialchars($record['record_date']); ?>"
                                                               data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
@@ -505,6 +517,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                                               data-egg-production="<?php echo htmlspecialchars($record['egg_production']); ?>"
                                                               data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                               data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                              data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                               data-crates-count="<?php echo htmlspecialchars($record['crates_count']); ?>"
                                                               data-laying-rate="<?php echo htmlspecialchars($record['laying_rate']); ?>"
                                                               data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
@@ -567,12 +580,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     </div>
                     <div class="modal-body">
                         <input type="hidden" name="record_date" id="recordDate">
+                        <input type="hidden" name="record_id" id="recordId" value="0">
                         <input type="hidden" name="cycle_id" value="<?php echo (int)$selectedCycleId; ?>">
 
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label>Date</label>
-                                <input type="date" class="form-control" id="selectedDate"
+                                <input type="date" class="form-control" id="selectedDate" max="<?php echo date('Y-m-d'); ?>"
                                        onchange="checkExistingRecord()" required>
                             </div>
                             <div class="col-md-6 mb-3">
@@ -602,9 +616,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
                         <div class="row">
                             <div class="col-md-4 mb-3">
-                                <label>Feed Consumption (25kg/bag)</label>
+                                <label for="feedItemId">Layer Feed Item</label>
+                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2">
+                                    <option value="">Select feed from current stock</option>
+                                    <?php foreach ($feedItems as $feedItem): ?>
+                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available<?php echo !(int)$feedItem['is_active'] ? ' (inactive; linked records only)' : ''; ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <label>Feed Consumption (bags)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
-                                       id="feedConsumption" step="0.01" min="0" required>
+                                       id="feedConsumption" oninput="document.getElementById('feedItemId').required = parseFloat(this.value) > 0" step="0.01" min="0" required>
                             </div>
                             <div class="col-md-4 mb-3">
                                 <label>Water Consumption (liters)</label>
@@ -741,18 +762,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         modal.show();
     }
 
+    let dailyRecordLookupVersion = 0;
+
     function loadExistingRecordOrPreviousStock(date, addTitle) {
         if (selectedCycleId <= 0) {
             document.getElementById('modalTitle').textContent = addTitle;
             return;
         }
 
-        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${selectedCycleId}`)
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
+        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${cycleId}`)
             .then(response => response.json())
             .then(data => {
+                if (lookupVersion !== dailyRecordLookupVersion ||
+                    document.getElementById('selectedDate').value !== date ||
+                    selectedCycleId !== cycleId) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
-                    fetchRecordData(date);
+                    fetchRecordData(date, lookupVersion, cycleId);
                     return;
                 }
 
@@ -765,20 +793,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     }
 
     // Fetch record data
-    function fetchRecordData(date) {
-        fetch(`../api/get_record.php?type=layer&date=${date}&cycle_id=${selectedCycleId}`)
+    function fetchRecordData(date, lookupVersion = dailyRecordLookupVersion, cycleId = selectedCycleId) {
+        fetch(`../api/get_record.php?type=layer&date=${date}&cycle_id=${cycleId}`)
             .then(response => response.json())
             .then(payload => {
                 if (payload && payload.success === false) {
                     throw new Error(payload.error || 'Failed to fetch record');
                 }
                 const data = payload ? payload.data : null;
+                if (lookupVersion !== dailyRecordLookupVersion ||
+                    document.getElementById('selectedDate').value !== date ||
+                    selectedCycleId !== cycleId) return;
                 if (data) {
+                    document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('birdsAge').value = parseNumericInput(data.birds_age || '');
                     document.getElementById('openingStock').value = parseNumericInput(data.opening_stock || '');
                     document.getElementById('mortality').value = parseNumericInput(data.mortality || 0);
                     document.getElementById('eggProduction').value = parseNumericInput(data.egg_production || '');
                     document.getElementById('feedConsumption').value = parseNumericInput(data.feed_consumption_bags || '');
+                    document.getElementById('feedItemId').value = data.feed_item_id || '';
                     document.getElementById('waterConsumption').value = parseNumericInput(data.water_consumption_liters || '');
                     document.getElementById('cratesCount').value = parseNumericInput(data.crates_count || '');
                     document.getElementById('layingRate').value = parseNumericInput(data.laying_rate || '');
@@ -813,6 +846,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Check existing record
     function checkExistingRecord() {
         const date = document.getElementById('selectedDate').value;
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
+        document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
         if (selectedCycleId <= 0) {
             resetForm();
@@ -821,12 +857,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             return;
         }
 
-        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${selectedCycleId}`)
+        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${cycleId}`)
             .then(response => response.json())
             .then(data => {
+                if (lookupVersion !== dailyRecordLookupVersion ||
+                    document.getElementById('selectedDate').value !== date ||
+                    selectedCycleId !== cycleId) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
-                    fetchRecordData(date);
+                    fetchRecordData(date, lookupVersion, cycleId);
                 } else {
                     document.getElementById('modalTitle').textContent = "Add Today's Record";
                     resetForm();
@@ -846,6 +885,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         unlockOpeningStock();
         document.getElementById('recordForm').reset();
         document.getElementById('mortality').value = 0;
+        document.getElementById('feedItemId').required = parseFloat(document.getElementById('feedConsumption').value) > 0;
         document.getElementById('cratesCount').value = '';
     }
 
@@ -864,6 +904,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         buttonSelector: '.edit-record-btn',
         modalSelector: '#recordModal',
         fieldMap: {
+            recordId: '#recordId',
             recordDate: '#recordDate',
             selectedDate: '#selectedDate',
             birdsAge: '#birdsAge',
@@ -871,6 +912,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             mortality: '#mortality',
             eggProduction: '#eggProduction',
             feedConsumption: '#feedConsumption',
+            feedItemId: '#feedItemId',
             waterConsumption: '#waterConsumption',
             cratesCount: '#cratesCount',
             layingRate: '#layingRate',
@@ -879,6 +921,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         },
         onShow: ({ modalElement }) => {
             modalElement.querySelector('#modalTitle').textContent = 'Edit Record';
+            modalElement.querySelector('#feedItemId').required = parseFloat(modalElement.querySelector('#feedConsumption').value) > 0;
         }
     });
 

@@ -175,9 +175,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         try {
             $pdo->beginTransaction();
 
-            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ?');
+            // Lock items before inspecting or deleting their ledger rows. This is
+            // the same item-first order used by daily-feed synchronization.
+            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE');
             $itemStmt->execute([$categoryId, $currentFarmId]);
             $items = $itemStmt->fetchAll();
+            foreach ($items as $itemRow) {
+                if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemRow['id'])) {
+                    throw new RuntimeException('This category contains feed used by daily records. Remove those records before deleting the category.');
+                }
+            }
 
             if (!empty($items)) {
                 $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?');
@@ -198,9 +205,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if (!empty($items)) {
                 $_SESSION['success'] .= ' Related stock items were also removed.';
             }
-        } catch (PDOException $e) {
-            $pdo->rollBack();
-            $_SESSION['error'] = 'Could not delete category. Please try again.';
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            if ($e instanceof PDOException) {
+                error_log('Inventory database operation failed: ' . $e->getMessage());
+                $_SESSION['error'] = 'The inventory operation could not be completed. Please try again.';
+            } else {
+                $_SESSION['error'] = $e->getMessage();
+            }
         }
 
         header('Location: inventory.php');
@@ -215,6 +227,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $feedCategory = $_POST['feed_category'] ?? 'general';
         $farmType = $_POST['farm_type'];
+        $initialStockDate = trim($_POST['initial_stock_date'] ?? '');
+
+        $parsedInitialStockDate = DateTimeImmutable::createFromFormat('!Y-m-d', $initialStockDate);
+        $dateErrors = DateTimeImmutable::getLastErrors();
+        if (!$parsedInitialStockDate || ($dateErrors !== false && ($dateErrors['warning_count'] > 0 || $dateErrors['error_count'] > 0))) {
+            $_SESSION['error'] = "Please select a valid initial stock date.";
+            header('Location: inventory.php');
+            exit();
+        }
+
+        if ($parsedInitialStockDate > new DateTimeImmutable('today')) {
+            $_SESSION['error'] = "Initial stock date cannot be in the future.";
+            header('Location: inventory.php');
+            exit();
+        }
 
         if (!in_array($feedCategory, allowedFeedCategories(), true)) {
             $_SESSION['error'] = "That feed type is not enabled for this farm.";
@@ -265,7 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $currentFarmId, $itemId,
             $_POST['initial_stock'],
             $_POST['initial_stock'],
-            date('Y-m-d'),
+            $parsedInitialStockDate->format('Y-m-d'),
             $_SESSION['user_id'] ?? null,
             $farmType
         ]);
@@ -286,8 +313,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $type = $_POST['transaction_type'];
         $quantity = $_POST['quantity'];
         
-        // Get current stock and valuation
-        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ?");
+        try {
+        $pdo->beginTransaction();
+        // Lock the same row used by automatic daily-feed deductions.
+        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
         $itemStmt->execute([$itemId, $currentFarmId]);
         $item = $itemStmt->fetch();
         
@@ -307,9 +336,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             } else {
                 if ($quantity > $previousStock) {
-                    $_SESSION['error'] = "Insufficient stock. Available: {$previousStock}";
-                    header('Location: inventory.php');
-                    exit();
+                    throw new RuntimeException("Insufficient stock. Available: {$previousStock}");
                 }
                 $newStock = $previousStock - $quantity;
             }
@@ -334,10 +361,24 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $item['farm_type'], $currentFarmId
             ]);
             
+            $movementId = (int)$pdo->lastInsertId();
+            recalculateStockTransactionBalances($pdo, $currentFarmId, (int)$itemId, date('Y-m-d'), $movementId);
+            $pdo->commit();
             $_SESSION['success'] = "Stock updated successfully!";
-            header('Location: inventory.php');
-            exit();
+        } else {
+            throw new RuntimeException('Inventory item not found.');
         }
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            if ($e instanceof PDOException) {
+                error_log('Inventory database operation failed: ' . $e->getMessage());
+                $_SESSION['error'] = 'The inventory operation could not be completed. Please try again.';
+            } else {
+                $_SESSION['error'] = $e->getMessage();
+            }
+        }
+        header('Location: inventory.php');
+        exit();
     }
     
     if (isset($_POST['delete_item'])) {
@@ -396,8 +437,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         try {
             $pdo->beginTransaction();
+            $lockItem = $pdo->prepare('SELECT id FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE');
+            $lockItem->execute([(int)$itemId, $currentFarmId]);
+            if (!$lockItem->fetchColumn()) {
+                throw new RuntimeException('Inventory item not found.');
+            }
+            if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemId)) {
+                throw new RuntimeException('This item is linked to daily feed records and cannot be permanently deleted.');
+            }
 
-            // Always clear related transactions so the item can be removed cleanly
+            // Clear unlinked transaction history before removing the item.
             $deleteTransactions = $pdo->prepare("DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?");
             $deleteTransactions->execute([$itemId, $currentFarmId]);
 
@@ -407,9 +456,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $pdo->commit();
 
             $_SESSION['success'] = "Item and its history permanently deleted.";
-        } catch (Exception $e) {
-            $pdo->rollBack();
-            $_SESSION['error'] = "Failed to delete item permanently. Please try again.";
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            if ($e instanceof PDOException) {
+                error_log('Inventory database operation failed: ' . $e->getMessage());
+                $_SESSION['error'] = 'The inventory operation could not be completed. Please try again.';
+            } else {
+                $_SESSION['error'] = $e->getMessage();
+            }
         }
 
         header('Location: inventory.php');
@@ -1078,6 +1132,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             </div>
 
                             <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label for="initialStockDate">Initial Stock Date</label>
+                                    <input type="date" name="initial_stock_date" id="initialStockDate" class="form-control"
+                                           value="<?php echo date('Y-m-d'); ?>" max="<?php echo date('Y-m-d'); ?>" required>
+                                    <small class="text-muted">Choose the date this opening stock was received.</small>
+                                </div>
                                 <div class="col-md-4 mb-3">
                                     <label>Initial Stock</label>
                                     <input type="number" name="initial_stock" class="form-control"

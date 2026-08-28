@@ -14,6 +14,13 @@ function assertNotContains(string $needle, string $haystack, string $message): v
     }
 }
 
+function assertTrue(bool $condition, string $message): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
 function readFileOrFail(string $path): string
 {
     $content = file_get_contents($path);
@@ -96,6 +103,10 @@ assertContains('farm_modules', $farmsPage, 'Farm provisioning must save selected
 assertContains('update_farm', $farmsPage, 'Platform owners must be able to edit farm profiles.');
 assertContains('delete_farm', $farmsPage, 'Platform owners must be able to delete farm profiles.');
 assertContains('deleteFarmData', $farmsPage, 'Farm deletion must remove tenant-owned records before the farm account.');
+assertTrue(
+    strpos($farmsPage, "'ruminant_daily_records'") < strpos($farmsPage, "'stock_transactions'"),
+    'Farm deletion must remove linked daily records before their stock transactions.'
+);
 
 $inventory = readFileOrFail($root . '/inventory.php');
 assertContains('requireCurrentFarmId()', $inventory, 'Inventory must identify the active farm.');
@@ -103,6 +114,71 @@ assertContains('si.farm_id = ?', $inventory, 'Inventory reads must be scoped to 
 assertContains('INSERT INTO inventory_categories (farm_id', $inventory, 'New categories must be assigned to the active farm.');
 assertContains('INSERT INTO stock_items', $inventory, 'Inventory must create stock items.');
 assertContains('(farm_id, item_name, category_id', $inventory, 'New stock items must be assigned to the active farm.');
+assertContains('name="initial_stock_date"', $inventory, 'New inventory items must provide a calendar date for their opening stock.');
+assertContains("createFromFormat('!Y-m-d', \$initialStockDate)", $inventory, 'The opening stock date must be validated on the server.');
+assertContains("\$parsedInitialStockDate > new DateTimeImmutable('today')", $inventory, 'Opening stock must not be dated in the future.');
+assertContains('max="<?php echo date(\'Y-m-d\'); ?>"', $inventory, 'The opening-stock date input must not offer future dates.');
+assertContains("\$parsedInitialStockDate->format('Y-m-d')", $inventory, 'The selected opening stock date must be used by the initial stock transaction.');
+
+foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_record.php' => 'broiler', 'ruminant/ruminant_daily_record.php' => 'ruminant'] as $dailyPage => $feedCategory) {
+    $dailyRecord = readFileOrFail($root . '/' . $dailyPage);
+    assertContains('name="feed_item_id"', $dailyRecord, "{$dailyPage} must let the user select a feed inventory item.");
+    assertContains("feed_category = '{$feedCategory}'", $dailyRecord, "{$dailyPage} must show only matching feed inventory items.");
+    assertContains('syncDailyFeedConsumption(', $dailyRecord, "{$dailyPage} must synchronize daily consumption with current feed stock.");
+    assertContains('$checkSql .= " FOR UPDATE"', $dailyRecord, "{$dailyPage} must lock an existing daily record before reading its feed movement.");
+    assertContains('data-feed-item-id=', $dailyRecord, "{$dailyPage} edit controls must retain the linked feed item.");
+    assertContains("feedItemId: '#feedItemId'", $dailyRecord, "{$dailyPage} edit modal must prefill the linked feed item.");
+    assertContains('$linkedFeedItemId = $movementId ? $feedItemId : null;', $dailyRecord, "{$dailyPage} must not retain an inventory link for zero consumption.");
+    assertContains("\$parsedRecordDate > new DateTimeImmutable('today')", $dailyRecord, "{$dailyPage} must reject future record dates server-side.");
+    assertContains('id="selectedDate" max="<?php echo date(\'Y-m-d\'); ?>"', $dailyRecord, "{$dailyPage} must prevent future record dates in the form.");
+    assertContains("document.getElementById('feedItemId').required = parseFloat(document.getElementById('feedConsumption').value) > 0;", $dailyRecord, "{$dailyPage} must reset the conditional feed-item requirement.");
+    assertTrue(
+        strpos($dailyRecord, '$pdo->beginTransaction()') < strpos($dailyRecord, '$checkStmt->execute($checkParams)'),
+        "{$dailyPage} must begin its transaction before looking up an existing daily record."
+    );
+}
+$inventoryFunctions = readFileOrFail($root . '/includes/functions.php');
+assertContains("transaction_type = 'used'", $inventoryFunctions, 'Daily feed deductions must be recorded as auditable used-stock movements.');
+assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lock stock while validating availability.');
+assertContains('stockTransactionHasDailyFeedLinks', $inventoryFunctions, 'Ledger mutations must be able to identify daily-record-managed movements.');
+assertContains('detachDailyFeedTransaction', $inventoryFunctions, 'Generated movements must be detached from daily records before restrictive deletion.');
+assertContains('would make stock negative on its transaction date', $inventoryFunctions, 'Backdated movements must not create a negative historical balance.');
+assertContains('?string $fromDate = null, int $fromId = 0', $inventoryFunctions, 'Ledger replay must support recalculating only the affected chronological suffix.');
+assertContains("id >= ?", $inventoryFunctions, 'Ledger replay must lock only transactions at or after the earliest changed movement.');
+assertTrue(
+    strpos($inventoryFunctions, "SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE") < strpos($inventoryFunctions, "transaction_type = 'used' FOR UPDATE"),
+    'Daily feed synchronization must lock stock items before generated movements.'
+);
+assertContains("error_log('Inventory database operation failed: '", $inventory, 'Inventory database failures must be logged server-side.');
+assertContains("\$e instanceof PDOException", $inventory, 'Inventory database failures must be replaced with a safe user-facing message.');
+assertContains('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE', $inventory, 'Category deletion must lock stock items in deterministic order before deleting ledger rows.');
+assertTrue(
+    strpos($inventory, "SELECT id FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE") < strpos($inventory, 'if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemId))'),
+    'Permanent item deletion must lock the item before checking daily-record links.'
+);
+assertContains("SELECT transaction_type, quantity FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? FOR UPDATE", $inventoryFunctions, 'Ledger replay must derive its opening balance from a current locking read.');
+foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/ruminant_feeds_record.php'] as $feedLedgerPage) {
+    $feedLedger = readFileOrFail($root . '/' . $feedLedgerPage);
+    assertContains('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE', $feedLedger, "{$feedLedgerPage} must lock stock before adding a movement.");
+    assertContains('stockTransactionHasDailyFeedLinks(', $feedLedger, "{$feedLedgerPage} must protect daily-record-managed movements.");
+    assertTrue(
+        strpos($feedLedger, 'catch (PDOException $e)') < strpos($feedLedger, 'catch (RuntimeException $e)'),
+        "{$feedLedgerPage} must sanitize database failures before showing validation errors."
+    );
+    assertContains("Unable to update the feed ledger. Please try again.", $feedLedger, "{$feedLedgerPage} must show a generic database error.");
+    assertContains("error_log('Feed ledger database error: '", $feedLedger, "{$feedLedgerPage} must log database failures server-side.");
+    assertTrue(
+        strpos($feedLedger, 'SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE') < strpos($feedLedger, 'stock_item_id = ? AND farm_type'),
+        "{$feedLedgerPage} must lock stock before locking an editable ledger movement."
+    );
+}
+assertContains("WHERE id = ? AND farm_id = ?", readFileOrFail($root . '/ruminant/ruminant_daily_record.php'), 'Ruminant edits must update only the daily record that was locked.');
+$deleteCategory = readFileOrFail($root . '/inventory/delete_category.php');
+assertContains('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE', $deleteCategory, 'Standalone category deletion must lock items before their transactions.');
+assertTrue(
+    strpos($deleteCategory, 'catch (PDOException $e)') < strpos($deleteCategory, 'catch (Throwable $e)'),
+    'Category deletion must sanitize PDO failures before handling safe validation errors.'
+);
 assertContains('foreach (allowedFeedCategories() as $category)', $inventory, 'The feed type dropdown must show only subscribed feed classifications.');
 assertContains('in_array($feedCategory, allowedFeedCategories(), true)', $inventory, 'Inventory must reject feed classifications outside the farm subscription.');
 
@@ -142,6 +218,21 @@ assertContains('$itemFarmType', readFileOrFail($root . '/api/update_stock.php'),
 foreach (['inventory/add_category.php', 'inventory/delete_category.php'] as $relativePath) {
     assertContains('verify_csrf_token', readFileOrFail($root . '/' . $relativePath), "{$relativePath} must enforce CSRF.");
 }
+assertContains('inventoryItemHasDailyFeedLinks(', readFileOrFail($root . '/inventory/delete_category.php'), 'The standalone category deletion route must preserve daily feed links.');
+$ruminantDaily = readFileOrFail($root . '/ruminant/ruminant_daily_record.php');
+assertTrue(
+    strpos($ruminantDaily, 'catch (PDOException $e)') < strpos($ruminantDaily, 'catch (Throwable $e)'),
+    'Ruminant deletion must sanitize database failures before showing validation errors.'
+);
+assertContains('The daily record could not be deleted. Please try again.', $ruminantDaily, 'Ruminant deletion must show a generic database error.');
+
+$baseSchema = readFileOrFail($root . '/database_schema.sql');
+foreach (['layer', 'broiler', 'ruminant'] as $recordType) {
+    assertContains("fk_{$recordType}_feed_item", $baseSchema, "The base schema must constrain {$recordType} feed item links.");
+    assertContains("fk_{$recordType}_feed_transaction", $baseSchema, "The base schema must constrain {$recordType} feed transaction links.");
+}
+$feedLinkMigration = readFileOrFail($root . '/migrations/012_daily_feed_inventory_links.sql');
+assertTrue(substr_count($feedLinkMigration, 'ALTER TABLE') >= 15, 'Feed-link migration operations must be split so duplicate columns do not skip indexes or constraints.');
 
 $productionCycles = readFileOrFail($root . '/management/production_cycles.php');
 assertContains('water_consumption_liters, other_details', $productionCycles, 'Ruminant cycle seed must include water consumption.');
@@ -189,6 +280,30 @@ foreach (['UPDATE stock_items SET is_active = 0 WHERE id = ? AND farm_id = ?', '
 }
 
 assertContains("SELECT id FROM production_cycles WHERE id = ? AND farm_id = ? AND status = 'active'", $productionCycles, 'Stock batches must only link to an active cycle in the current farm.');
+
+foreach ([
+    'poultry/layers_daily_record.php',
+    'poultry/broiler_daily_record.php',
+    'ruminant/ruminant_daily_record.php',
+] as $relativePath) {
+    $dailyRecordPage = readFileOrFail($root . '/' . $relativePath);
+    assertContains('name="record_id" id="recordId" value="0"', $dailyRecordPage, "{$relativePath} must submit the clicked record identity.");
+    assertContains('data-record-id=', $dailyRecordPage, "{$relativePath} edit controls must carry the clicked record identity.");
+    assertContains("recordId: '#recordId'", $dailyRecordPage, "{$relativePath} edit modal must populate the clicked record identity.");
+    assertContains("document.getElementById('recordId').value = 0;", $dailyRecordPage, "{$relativePath} must clear stale record identity when its lookup fields change.");
+    assertContains("document.getElementById('recordId').value = data.id || 0;", $dailyRecordPage, "{$relativePath} must retain the identity returned by a date lookup.");
+    assertTrue(
+        strpos($dailyRecordPage, 'lookupVersion !== dailyRecordLookupVersion') !== false ||
+        strpos($dailyRecordPage, 'lookupVersion === dailyRecordLookupVersion') !== false,
+        "{$relativePath} must ignore stale asynchronous record lookups."
+    );
+    assertContains('if ($recordId > 0)', $dailyRecordPage, "{$relativePath} must lock edits by record identity.");
+    assertTrue(
+        strpos($dailyRecordPage, 'catch (PDOException $e)') < strpos($dailyRecordPage, 'catch (RuntimeException $e)'),
+        "{$relativePath} must sanitize database exceptions before handling validation errors."
+    );
+    assertContains("Unable to save the daily record. Please try again.", $dailyRecordPage, "{$relativePath} must show a generic database error.");
+}
 
 $farmsPage = readFileOrFail($root . '/management/farms.php');
 assertContains('function detectFarmLogoExtension', $farmsPage, 'Farm logos must be validated before provisioning begins.');

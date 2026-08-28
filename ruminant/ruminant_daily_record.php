@@ -17,6 +17,9 @@ $canDeleteRecords = isPlatformOwner() || hasRole('farm_admin');
 $canEditRecords = $canDeleteRecords || hasRole('ruminant_manager');
 $managedTypes = ['cattle', 'goat', 'sheep', 'other'];
 $tenantFarmId = requireCurrentFarmId();
+$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit, is_active FROM stock_items WHERE farm_id = ? AND feed_category = 'ruminant' AND LOWER(TRIM(unit)) IN ('kg', 'kgs', 'kilogram', 'kilograms') AND (is_active = 1 OR id IN (SELECT feed_item_id FROM ruminant_daily_records WHERE farm_id = ? AND feed_stock_transaction_id IS NOT NULL)) ORDER BY is_active DESC, item_name");
+$feedItemsStmt->execute([$tenantFarmId, $tenantFarmId]);
+$feedItems = $feedItemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
 $activeCycles = [];
 $selectedCycle = null;
@@ -46,14 +49,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_record']) && $
     $recordId = (int)($_POST['record_id'] ?? 0);
 
     if ($recordId > 0) {
-        $recordCheck = $pdo->prepare("SELECT animal_type FROM ruminant_daily_records WHERE id = ? AND farm_id = ?");
-        $recordCheck->execute([$recordId, $tenantFarmId]);
-        $record = $recordCheck->fetch();
+        try {
+            $pdo->beginTransaction();
+            $recordCheck = $pdo->prepare("SELECT animal_type, feed_stock_transaction_id FROM ruminant_daily_records WHERE id = ? AND farm_id = ? FOR UPDATE");
+            $recordCheck->execute([$recordId, $tenantFarmId]);
+            $record = $recordCheck->fetch();
 
-        if ($record && in_array(strtolower($record['animal_type']), $managedTypes, true)) {
-            $deleteStmt = $pdo->prepare("DELETE FROM ruminant_daily_records WHERE id = ? AND farm_id = ?");
-            $deleteStmt->execute([$recordId, $tenantFarmId]);
-            $_SESSION['success'] = "Ruminant daily record deleted successfully.";
+            if ($record && in_array(strtolower($record['animal_type']), $managedTypes, true)) {
+                reverseDailyFeedConsumption($pdo, $tenantFarmId, $record['feed_stock_transaction_id'] ? (int)$record['feed_stock_transaction_id'] : null);
+                $deleteStmt = $pdo->prepare("DELETE FROM ruminant_daily_records WHERE id = ? AND farm_id = ?");
+                $deleteStmt->execute([$recordId, $tenantFarmId]);
+                $pdo->commit();
+                $_SESSION['success'] = "Ruminant daily record deleted successfully.";
+            } else {
+                $pdo->rollBack();
+            }
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('Ruminant daily record deletion failed: ' . $e->getMessage());
+            $_SESSION['error'] = 'The daily record could not be deleted. Please try again.';
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $_SESSION['error'] = $e->getMessage();
         }
     }
 
@@ -223,49 +240,79 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     };
     $recordDate = $_POST['record_date'];
     $animalType = strtolower(trim($_POST['animal_type']));
+    $feedQuantityRaw = $parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedQuantity = (float)$feedQuantityRaw;
+    $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
+    $recordId = (int)($_POST['record_id'] ?? 0);
 
-    // Check if record exists for this date and animal type
-    $checkSql = "SELECT id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
-    $checkParams = [$tenantFarmId, $recordDate, $animalType];
-    if ($cycleEnabled && $selectedCycleId > 0) {
-        $checkSql .= " AND cycle_id = ?";
-        $checkParams[] = $selectedCycleId;
-    }
-    $checkStmt = $pdo->prepare($checkSql);
-    $checkStmt->execute($checkParams);
+    try {
+        if (!is_numeric($feedQuantityRaw) || !is_finite($feedQuantity) || $feedQuantity < 0) {
+            throw new RuntimeException('Feed consumption must be a non-negative number.');
+        }
+        $parsedRecordDate = DateTimeImmutable::createFromFormat('!Y-m-d', $recordDate);
+        $recordDateErrors = DateTimeImmutable::getLastErrors();
+        if (!$parsedRecordDate || ($recordDateErrors !== false && ($recordDateErrors['warning_count'] > 0 || $recordDateErrors['error_count'] > 0))) {
+            throw new RuntimeException('Please select a valid record date.');
+        }
+        if ($parsedRecordDate > new DateTimeImmutable('today')) {
+            throw new RuntimeException('Daily records cannot be dated in the future.');
+        }
+        $pdo->beginTransaction();
+        // Lock the record before reading its linked movement so concurrent edits serialize.
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_kg, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ?";
+        $checkParams = [$tenantFarmId];
+        if ($recordId > 0) {
+            $checkSql .= " AND id = ?";
+            $checkParams[] = $recordId;
+        } else {
+            $checkSql .= " AND record_date = ? AND LOWER(animal_type) = ?";
+            $checkParams[] = $recordDate;
+            $checkParams[] = $animalType;
+            if ($cycleEnabled && $selectedCycleId > 0) {
+                $checkSql .= " AND cycle_id = ?";
+                $checkParams[] = $selectedCycleId;
+            }
+        }
+        $checkSql .= " FOR UPDATE";
+        $checkStmt = $pdo->prepare($checkSql);
+        $checkStmt->execute($checkParams);
+        $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
+        if ($recordId > 0 && !$existingRecord) {
+            throw new RuntimeException('The selected daily record could not be found.');
+        }
 
-    if ($checkStmt->fetch()) {
+        $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_kg'] === $feedQuantity && $feedItemId === 0)
+            ? null
+            : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'ruminant', 'kg', $_SESSION['user_id'] ?? null);
+        $linkedFeedItemId = $movementId ? $feedItemId : null;
+    if ($existingRecord) {
         // Update existing record
         $stmt = $pdo->prepare("UPDATE ruminant_daily_records SET
-            opening_stock = ?, mortality = ?, feed_consumption_kg = ?,
+            opening_stock = ?, mortality = ?, feed_consumption_kg = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
             water_consumption_liters = ?, other_details = ?, tag_no = ?,
             medications = ?, reproduction_details = ?, remarks = ?
-            WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?" . (($cycleEnabled && $selectedCycleId > 0) ? " AND cycle_id = ?" : ""));
+            WHERE id = ? AND farm_id = ?");
         $updateParams = [
             $parseNumeric($_POST['opening_stock']),
             $parseNumeric($_POST['mortality']),
-            $parseNumeric($_POST['feed_consumption']),
+            $feedQuantity, $linkedFeedItemId, $movementId,
             $parseNumeric($_POST['water_consumption']),
             $_POST['other_details'],
             $_POST['tag_no'],
             $_POST['medications'],
             $_POST['reproduction_details'],
             $_POST['remarks'],
-            $tenantFarmId,
-            $recordDate,
-            $animalType
+            $existingRecord['id'],
+            $tenantFarmId
         ];
-        if ($cycleEnabled && $selectedCycleId > 0) {
-            $updateParams[] = $selectedCycleId;
-        }
         $stmt->execute($updateParams);
     } else {
         // Insert new record
         $stmt = $pdo->prepare("INSERT INTO ruminant_daily_records
             (farm_id, cycle_id, record_date, animal_type, opening_stock, mortality,
-             feed_consumption_kg, water_consumption_liters, other_details,
+             feed_consumption_kg, feed_item_id, feed_stock_transaction_id, water_consumption_liters, other_details,
              tag_no, medications, reproduction_details, remarks, user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
         $stmt->execute([
             $tenantFarmId,
             ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null,
@@ -273,7 +320,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             $animalType,
             $parseNumeric($_POST['opening_stock']),
             $parseNumeric($_POST['mortality']),
-            $parseNumeric($_POST['feed_consumption']),
+            $feedQuantity, $linkedFeedItemId, $movementId,
             $parseNumeric($_POST['water_consumption']),
             $_POST['other_details'],
             $_POST['tag_no'],
@@ -284,7 +331,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         ]);
     }
 
-    $_SESSION['success'] = "Ruminant daily record saved successfully!";
+        $pdo->commit();
+        $_SESSION['success'] = "Ruminant daily record saved successfully!";
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unable to save ruminant daily record: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to save the daily record. Please try again.';
+    } catch (RuntimeException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $_SESSION['error'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unable to save ruminant daily record: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to save the daily record. Please try again.';
+    }
     header("Location: ruminant_daily_record.php?month=" . $month . "&cycle_id=" . (int)$selectedCycleId);
     exit();
 }
@@ -299,6 +359,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
 </head>
 <body class="ruminant-page">
     <?php include(__DIR__ . '/../navbar.php'); ?>
+    <?php if (isset($_SESSION['error'])): ?>
+        <div class="container-fluid mt-3"><div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div></div>
+    <?php endif; ?>
 
     <div class="container-fluid mt-4 poultry-shell">
         <?php if (isset($_SESSION['success'])): ?>
@@ -634,12 +700,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                       <div class="d-flex flex-wrap gap-2">
                                                           <button class="btn btn-sm btn-outline-primary edit-record-btn"
                                                                   title="Edit Record"
+                                                                  data-record-id="<?php echo (int)$record['id']; ?>"
                                                                   data-record-date="<?php echo htmlspecialchars($record['record_date']); ?>"
                                                                   data-selected-date="<?php echo htmlspecialchars($record['record_date']); ?>"
                                                                   data-animal-type="<?php echo htmlspecialchars($record['animal_type']); ?>"
                                                                   data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
                                                                   data-mortality="<?php echo htmlspecialchars($record['mortality']); ?>"
                                                                   data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_kg']); ?>"
+                                                                  data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                                   data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                                   data-tag-no="<?php echo htmlspecialchars($record['tag_no']); ?>"
                                                                   data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
@@ -696,12 +764,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                     </div>
                     <div class="modal-body">
                         <input type="hidden" name="record_date" id="recordDate">
+                        <input type="hidden" name="record_id" id="recordId" value="0">
                         <input type="hidden" name="animal_type" id="animalTypeHidden">
 
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label>Date</label>
-                                <input type="date" class="form-control" id="selectedDate"
+                                <input type="date" class="form-control" id="selectedDate" max="<?php echo date('Y-m-d'); ?>"
                                        onchange="checkExistingRecord()" required>
                             </div>
                             <div class="col-md-6 mb-3">
@@ -731,9 +800,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
 
                         <div class="row">
                             <div class="col-md-6 mb-3">
+                                <label for="feedItemId">Ruminant Feed Item</label>
+                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2">
+                                    <option value="">Select feed from current stock</option>
+                                    <?php foreach ($feedItems as $feedItem): ?>
+                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available<?php echo !(int)$feedItem['is_active'] ? ' (inactive; linked records only)' : ''; ?></option>
+                                    <?php endforeach; ?>
+                                </select>
                                 <label>Feed Consumption (kg)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
-                                       id="feedConsumption" step="0.1" min="0" required>
+                                       id="feedConsumption" oninput="document.getElementById('feedItemId').required = parseFloat(this.value) > 0" step="0.1" min="0" required>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label>Water Consumption (liters)</label>
@@ -852,6 +928,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         modal.show();
     }
 
+    let dailyRecordLookupVersion = 0;
+
     function loadExistingRecordOrPreviousStock(date, animalType) {
         if (selectedCycleId <= 0 || !date || !animalType) {
             document.getElementById('modalTitle').textContent = "Add Today's Record";
@@ -863,13 +941,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             animal_type: animalType
         });
 
-        fetch(`../api/check_ruminant_record.php?cycle_id=${selectedCycleId}&${params}`)
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
+        fetch(`../api/check_ruminant_record.php?cycle_id=${cycleId}&${params}`)
             .then(response => response.json())
             .then(data => {
+                if (!ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion)) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
                     document.getElementById('animalType').disabled = true;
-                    fetchRecordData(date, animalType);
+                    fetchRecordData(date, animalType, lookupVersion, cycleId);
                     return;
                 }
 
@@ -891,23 +972,33 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     }
 
     // Fetch record data
-    function fetchRecordData(date, animalType) {
+    function ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion) {
+        return lookupVersion === dailyRecordLookupVersion &&
+            document.getElementById('selectedDate').value === date &&
+            document.getElementById('animalType').value === animalType &&
+            selectedCycleId === cycleId;
+    }
+
+    function fetchRecordData(date, animalType, lookupVersion = dailyRecordLookupVersion, cycleId = selectedCycleId) {
         const params = new URLSearchParams({
             date: date,
             animal_type: animalType
         });
 
-        fetch(`../api/get_record.php?type=ruminant&cycle_id=${selectedCycleId}&${params}`)
+        fetch(`../api/get_record.php?type=ruminant&cycle_id=${cycleId}&${params}`)
             .then(response => response.json())
             .then(payload => {
                 if (payload && payload.success === false) {
                     throw new Error(payload.error || 'Failed to fetch record');
                 }
                 const data = payload ? payload.data : null;
+                if (!ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion)) return;
                 if (data) {
+                    document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('openingStock').value = parseNumericInput(data.opening_stock || '');
                     document.getElementById('mortality').value = parseNumericInput(data.mortality || 0);
                     document.getElementById('feedConsumption').value = parseNumericInput(data.feed_consumption_kg || '');
+                    document.getElementById('feedItemId').value = data.feed_item_id || '';
                     document.getElementById('waterConsumption').value = parseNumericInput(data.water_consumption_liters || '');
                     document.getElementById('tagNo').value = data.tag_no || '';
                     document.getElementById('medications').value = data.medications || '';
@@ -945,7 +1036,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     function checkExistingRecord() {
         const date = document.getElementById('selectedDate').value;
         const animalType = document.getElementById('animalType').value;
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
 
+        document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
         document.getElementById('animalTypeHidden').value = animalType;
 
@@ -964,13 +1058,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             animal_type: animalType
         });
 
-        fetch(`../api/check_ruminant_record.php?cycle_id=${selectedCycleId}&${params}`)
+        fetch(`../api/check_ruminant_record.php?cycle_id=${cycleId}&${params}`)
             .then(response => response.json())
             .then(data => {
+                if (!ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion)) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
                     document.getElementById('animalType').disabled = true;
-                    fetchRecordData(date, animalType);
+                    fetchRecordData(date, animalType, lookupVersion, cycleId);
                 } else {
                     document.getElementById('modalTitle').textContent = "Add Today's Record";
                     document.getElementById('animalType').disabled = false;
@@ -996,6 +1091,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         unlockOpeningStock();
         document.getElementById('recordForm').reset();
         document.getElementById('mortality').value = 0;
+        document.getElementById('feedItemId').required = parseFloat(document.getElementById('feedConsumption').value) > 0;
         document.getElementById('recordDate').value = document.getElementById('selectedDate').value;
         document.getElementById('animalTypeHidden').value = document.getElementById('animalType').value;
     }
@@ -1013,12 +1109,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         buttonSelector: '.edit-record-btn',
         modalSelector: '#recordModal',
         fieldMap: {
+            recordId: '#recordId',
             recordDate: '#recordDate',
             selectedDate: '#selectedDate',
             animalType: '#animalType',
             openingStock: '#openingStock',
             mortality: '#mortality',
             feedConsumption: '#feedConsumption',
+            feedItemId: '#feedItemId',
             waterConsumption: '#waterConsumption',
             tagNo: '#tagNo',
             medications: '#medications',
@@ -1028,6 +1126,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         },
         onShow: ({ modalElement, data }) => {
             modalElement.querySelector('#modalTitle').textContent = 'Edit Record';
+            modalElement.querySelector('#feedItemId').required = parseFloat(modalElement.querySelector('#feedConsumption').value) > 0;
             modalElement.querySelector('#animalType').disabled = true;
             modalElement.querySelector('#animalTypeHidden').value = data.animalType || '';
         }

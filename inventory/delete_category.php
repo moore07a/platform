@@ -26,9 +26,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->beginTransaction();
 
             // Find stock items that belong to this category
-            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ?');
+            // Follow the item-before-ledger lock order used by stock mutations.
+            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE');
             $itemStmt->execute([$categoryId, $farmId]);
             $items = $itemStmt->fetchAll();
+
+            foreach ($items as $item) {
+                if (inventoryItemHasDailyFeedLinks($pdo, $farmId, (int)$item['id'])) {
+                    throw new RuntimeException('This category contains feed used by daily records. Remove those records before deleting the category.');
+                }
+            }
 
             // Delete any transactions tied to those items first to satisfy FK constraints
             if (!empty($items)) {
@@ -53,8 +60,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $message .= ' Removed related items: ' . implode(', ', $itemNames);
             }
         } catch (PDOException $e) {
-            $pdo->rollBack();
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('Inventory category deletion failed: ' . $e->getMessage());
             $message = 'Could not delete category. It may be in use.';
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $message = $e->getMessage();
         }
     }
 }

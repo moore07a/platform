@@ -15,7 +15,7 @@ $appliedSet = array_fill_keys($applied, true);
 $migrationFiles = glob(__DIR__ . '/../migrations/*.sql');
 sort($migrationFiles);
 
-$ignoredMysqlCodes = [1060, 1061, 1050, 1091]; // duplicate column / key / table, missing drop target
+$ignoredMysqlCodes = [1060, 1061, 1050, 1091, 1826]; // duplicate column / key / table / FK, missing drop target
 
 function markMigrationApplied(PDO $pdo, string $fileName): void
 {

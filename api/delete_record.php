@@ -18,18 +18,28 @@ if (($type === 'layer' || $type === 'broiler') && !checkAccess('poultry')) {
 }
 
 try {
+    $pdo->beginTransaction();
     if ($type === 'layer') {
-        $stmt = $pdo->prepare("DELETE FROM layer_daily_records WHERE id = ? AND farm_id = ?");
+        $table = 'layer_daily_records';
     } elseif ($type === 'broiler') {
-        $stmt = $pdo->prepare("DELETE FROM broiler_daily_records WHERE id = ? AND farm_id = ?");
+        $table = 'broiler_daily_records';
     } else {
         send_json(['success' => false, 'error' => 'Unsupported record type'], 400);
     }
     
-    $stmt->execute([$id, requireCurrentFarmId()]);
+    $farmId = requireCurrentFarmId();
+    $recordStmt = $pdo->prepare("SELECT feed_stock_transaction_id FROM {$table} WHERE id = ? AND farm_id = ? FOR UPDATE");
+    $recordStmt->execute([$id, $farmId]);
+    $record = $recordStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$record) throw new RuntimeException('Record not found.');
+    reverseDailyFeedConsumption($pdo, $farmId, $record['feed_stock_transaction_id'] ? (int)$record['feed_stock_transaction_id'] : null);
+    $stmt = $pdo->prepare("DELETE FROM {$table} WHERE id = ? AND farm_id = ?");
+    $stmt->execute([$id, $farmId]);
+    $pdo->commit();
     
     send_json(['success' => true, 'message' => 'Record deleted successfully']);
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     log_app_error('delete_record_failed', ['error' => $e->getMessage(), 'type' => $type, 'id' => $id]);
     send_json(['success' => false, 'error' => $e->getMessage()], 400);
 }
