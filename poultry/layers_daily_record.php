@@ -762,18 +762,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         modal.show();
     }
 
+    let dailyRecordLookupVersion = 0;
+
     function loadExistingRecordOrPreviousStock(date, addTitle) {
         if (selectedCycleId <= 0) {
             document.getElementById('modalTitle').textContent = addTitle;
             return;
         }
 
-        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${selectedCycleId}`)
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
+        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${cycleId}`)
             .then(response => response.json())
             .then(data => {
+                if (lookupVersion !== dailyRecordLookupVersion ||
+                    document.getElementById('selectedDate').value !== date ||
+                    selectedCycleId !== cycleId) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
-                    fetchRecordData(date);
+                    fetchRecordData(date, lookupVersion, cycleId);
                     return;
                 }
 
@@ -786,14 +793,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     }
 
     // Fetch record data
-    function fetchRecordData(date) {
-        fetch(`../api/get_record.php?type=layer&date=${date}&cycle_id=${selectedCycleId}`)
+    function fetchRecordData(date, lookupVersion = dailyRecordLookupVersion, cycleId = selectedCycleId) {
+        fetch(`../api/get_record.php?type=layer&date=${date}&cycle_id=${cycleId}`)
             .then(response => response.json())
             .then(payload => {
                 if (payload && payload.success === false) {
                     throw new Error(payload.error || 'Failed to fetch record');
                 }
                 const data = payload ? payload.data : null;
+                if (lookupVersion !== dailyRecordLookupVersion ||
+                    document.getElementById('selectedDate').value !== date ||
+                    selectedCycleId !== cycleId) return;
                 if (data) {
                     document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('birdsAge').value = parseNumericInput(data.birds_age || '');
@@ -836,6 +846,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     // Check existing record
     function checkExistingRecord() {
         const date = document.getElementById('selectedDate').value;
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
         document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
         if (selectedCycleId <= 0) {
@@ -845,12 +857,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             return;
         }
 
-        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${selectedCycleId}`)
+        fetch(`../api/check_record.php?type=layer&date=${date}&cycle_id=${cycleId}`)
             .then(response => response.json())
             .then(data => {
+                if (lookupVersion !== dailyRecordLookupVersion ||
+                    document.getElementById('selectedDate').value !== date ||
+                    selectedCycleId !== cycleId) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
-                    fetchRecordData(date);
+                    fetchRecordData(date, lookupVersion, cycleId);
                 } else {
                     document.getElementById('modalTitle').textContent = "Add Today's Record";
                     resetForm();

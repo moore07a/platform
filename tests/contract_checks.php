@@ -279,6 +279,11 @@ foreach ([
     assertContains("recordId: '#recordId'", $dailyRecordPage, "{$relativePath} edit modal must populate the clicked record identity.");
     assertContains("document.getElementById('recordId').value = 0;", $dailyRecordPage, "{$relativePath} must clear stale record identity when its lookup fields change.");
     assertContains("document.getElementById('recordId').value = data.id || 0;", $dailyRecordPage, "{$relativePath} must retain the identity returned by a date lookup.");
+    assertTrue(
+        strpos($dailyRecordPage, 'lookupVersion !== dailyRecordLookupVersion') !== false ||
+        strpos($dailyRecordPage, 'lookupVersion === dailyRecordLookupVersion') !== false,
+        "{$relativePath} must ignore stale asynchronous record lookups."
+    );
     assertContains('if ($recordId > 0)', $dailyRecordPage, "{$relativePath} must lock edits by record identity.");
     assertTrue(
         strpos($dailyRecordPage, 'catch (PDOException $e)') < strpos($dailyRecordPage, 'catch (RuntimeException $e)'),

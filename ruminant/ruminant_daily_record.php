@@ -924,6 +924,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         modal.show();
     }
 
+    let dailyRecordLookupVersion = 0;
+
     function loadExistingRecordOrPreviousStock(date, animalType) {
         if (selectedCycleId <= 0 || !date || !animalType) {
             document.getElementById('modalTitle').textContent = "Add Today's Record";
@@ -935,13 +937,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             animal_type: animalType
         });
 
-        fetch(`../api/check_ruminant_record.php?cycle_id=${selectedCycleId}&${params}`)
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
+        fetch(`../api/check_ruminant_record.php?cycle_id=${cycleId}&${params}`)
             .then(response => response.json())
             .then(data => {
+                if (!ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion)) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
                     document.getElementById('animalType').disabled = true;
-                    fetchRecordData(date, animalType);
+                    fetchRecordData(date, animalType, lookupVersion, cycleId);
                     return;
                 }
 
@@ -963,19 +968,27 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     }
 
     // Fetch record data
-    function fetchRecordData(date, animalType) {
+    function ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion) {
+        return lookupVersion === dailyRecordLookupVersion &&
+            document.getElementById('selectedDate').value === date &&
+            document.getElementById('animalType').value === animalType &&
+            selectedCycleId === cycleId;
+    }
+
+    function fetchRecordData(date, animalType, lookupVersion = dailyRecordLookupVersion, cycleId = selectedCycleId) {
         const params = new URLSearchParams({
             date: date,
             animal_type: animalType
         });
 
-        fetch(`../api/get_record.php?type=ruminant&cycle_id=${selectedCycleId}&${params}`)
+        fetch(`../api/get_record.php?type=ruminant&cycle_id=${cycleId}&${params}`)
             .then(response => response.json())
             .then(payload => {
                 if (payload && payload.success === false) {
                     throw new Error(payload.error || 'Failed to fetch record');
                 }
                 const data = payload ? payload.data : null;
+                if (!ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion)) return;
                 if (data) {
                     document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('openingStock').value = parseNumericInput(data.opening_stock || '');
@@ -1019,6 +1032,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     function checkExistingRecord() {
         const date = document.getElementById('selectedDate').value;
         const animalType = document.getElementById('animalType').value;
+        const cycleId = selectedCycleId;
+        const lookupVersion = ++dailyRecordLookupVersion;
 
         document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
@@ -1039,13 +1054,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             animal_type: animalType
         });
 
-        fetch(`../api/check_ruminant_record.php?cycle_id=${selectedCycleId}&${params}`)
+        fetch(`../api/check_ruminant_record.php?cycle_id=${cycleId}&${params}`)
             .then(response => response.json())
             .then(data => {
+                if (!ruminantLookupIsCurrent(date, animalType, cycleId, lookupVersion)) return;
                 if (data.exists) {
                     document.getElementById('modalTitle').textContent = 'Edit Record';
                     document.getElementById('animalType').disabled = true;
-                    fetchRecordData(date, animalType);
+                    fetchRecordData(date, animalType, lookupVersion, cycleId);
                 } else {
                     document.getElementById('modalTitle').textContent = "Add Today's Record";
                     document.getElementById('animalType').disabled = false;
