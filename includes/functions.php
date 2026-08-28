@@ -189,8 +189,20 @@ function recalculateStockTransactionBalances(PDO $pdo, int $farmId, int $itemId)
     foreach ($rows as $row) {
         $previous = $balance;
         $balance += $row['transaction_type'] === 'received' ? (float)$row['quantity'] : -(float)$row['quantity'];
+        if ($balance < -0.000001) {
+            throw new RuntimeException('This backdated transaction would make stock negative on its transaction date.');
+        }
         $update->execute([$previous, $balance, $row['id'], $farmId]);
     }
+}
+
+function stockTransactionHasDailyFeedLinks(PDO $pdo, int $farmId, int $transactionId): bool {
+    foreach (['layer_daily_records', 'broiler_daily_records', 'ruminant_daily_records'] as $table) {
+        $stmt = $pdo->prepare("SELECT 1 FROM {$table} WHERE farm_id = ? AND feed_stock_transaction_id = ? LIMIT 1");
+        $stmt->execute([$farmId, $transactionId]);
+        if ($stmt->fetchColumn()) return true;
+    }
+    return false;
 }
 
 function inventoryItemHasDailyFeedLinks(PDO $pdo, int $farmId, int $itemId): bool {

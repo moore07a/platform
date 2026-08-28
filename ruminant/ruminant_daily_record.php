@@ -677,6 +677,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                                   data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
                                                                   data-mortality="<?php echo htmlspecialchars($record['mortality']); ?>"
                                                                   data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_kg']); ?>"
+                                                                  data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                                   data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                                   data-tag-no="<?php echo htmlspecialchars($record['tag_no']); ?>"
                                                                   data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
@@ -1064,6 +1065,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             openingStock: '#openingStock',
             mortality: '#mortality',
             feedConsumption: '#feedConsumption',
+            feedItemId: '#feedItemId',
             waterConsumption: '#waterConsumption',
             tagNo: '#tagNo',
             medications: '#medications',

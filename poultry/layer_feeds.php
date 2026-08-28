@@ -41,52 +41,41 @@ $feedItems = $stockStmt->fetchAll();
 
 // Handle new transaction (usage-only)
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_transaction'])) {
-    $itemId = $_POST['feed_item'];
-    $type = 'used';
-    $quantity = $_POST['quantity'];
+    $itemId = (int)$_POST['feed_item'];
+    $quantity = (float)$_POST['quantity'];
     $date = $_POST['transaction_date'];
     $redirectMonth = date('Y-m', strtotime($date));
-    
-    // Get current stock
-    $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ?");
-    $itemStmt->execute([$itemId, $tenantFarmId]);
-    $item = $itemStmt->fetch();
-    
-    if ($item) {
-        $previousStock = $item['current_stock'];
-        
+
+    try {
+        $pdo->beginTransaction();
+        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
+        $itemStmt->execute([$itemId, $tenantFarmId]);
+        $item = $itemStmt->fetch();
+        if (!$item) throw new Exception('Selected feed item not found.');
+        if (!is_finite($quantity) || $quantity <= 0) throw new Exception('Quantity must be greater than zero.');
+
+        $previousStock = (float)$item['current_stock'];
         if ($quantity > $previousStock) {
-            $_SESSION['error'] = "Insufficient stock. Available: {$previousStock} {$item['unit']}";
-            header("Location: layer_feeds.php?month={$redirectMonth}");
-            exit();
+            throw new Exception("Insufficient stock. Available: {$previousStock} {$item['unit']}");
         }
         $newStock = $previousStock - $quantity;
-        
-        // Update stock
-        $updateStmt = $pdo->prepare("UPDATE stock_items SET current_stock = ? WHERE id = ? AND farm_id = ?");
-        $updateStmt->execute([$newStock, $itemId, $tenantFarmId]);
-        
-        // Record transaction
-        $transStmt = $pdo->prepare("INSERT INTO stock_transactions 
-            (stock_item_id, transaction_type, quantity, previous_stock, new_stock, 
-             transaction_date, remarks, user_id, farm_type, farm_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'poultry', ?)");
-        $transStmt->execute([
-            $itemId,
-            $type,
-            $quantity,
-            $previousStock,
-            $newStock,
-            $date,
-            $_POST['remarks'],
-            $_SESSION['user_id'],
-            $tenantFarmId
-        ]);
-        
-        $_SESSION['success'] = "Feed transaction recorded successfully!";
-        header("Location: layer_feeds.php?month={$redirectMonth}");
-        exit();
+        $pdo->prepare("UPDATE stock_items SET current_stock = ? WHERE id = ? AND farm_id = ?")
+            ->execute([$newStock, $itemId, $tenantFarmId]);
+        $transStmt = $pdo->prepare("INSERT INTO stock_transactions
+            (stock_item_id, transaction_type, quantity, previous_stock, new_stock,
+             transaction_date, remarks, user_id, farm_type, farm_id)
+            VALUES (?, 'used', ?, ?, ?, ?, ?, ?, 'poultry', ?)");
+        $transStmt->execute([$itemId, $quantity, $previousStock, $newStock, $date,
+            $_POST['remarks'], $_SESSION['user_id'], $tenantFarmId]);
+        recalculateStockTransactionBalances($pdo, $tenantFarmId, $itemId);
+        $pdo->commit();
+        $_SESSION['success'] = 'Feed transaction recorded successfully!';
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $_SESSION['error'] = $e->getMessage();
     }
+    header("Location: layer_feeds.php?month={$redirectMonth}");
+    exit();
 }
 
 // Handle transaction deletion (owner only)
@@ -96,12 +85,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
     try {
         $pdo->beginTransaction();
 
-        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry'");
+        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry' FOR UPDATE");
         $transStmt->execute([$transactionId, $tenantFarmId]);
         $transaction = $transStmt->fetch();
 
         if (!$transaction) {
             throw new Exception('Transaction not found.');
+        }
+        if (stockTransactionHasDailyFeedLinks($pdo, $tenantFarmId, (int)$transactionId)) {
+            throw new Exception('This transaction is managed by a daily feed record and cannot be deleted here.');
         }
 
         $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
@@ -150,12 +142,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
     try {
         $pdo->beginTransaction();
 
-        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry'");
+        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry' FOR UPDATE");
         $transStmt->execute([$transactionId, $tenantFarmId]);
         $existing = $transStmt->fetch();
 
         if (!$existing) {
             throw new Exception('Transaction not found.');
+        }
+        if (stockTransactionHasDailyFeedLinks($pdo, $tenantFarmId, (int)$transactionId)) {
+            throw new Exception('This transaction is managed by a daily feed record and cannot be edited here.');
         }
 
         $oldItemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");

@@ -371,6 +371,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                     data-egg-production="<?php echo htmlspecialchars($record['egg_production']); ?>"
                                                     data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                     data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                    data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                     data-crates-count="<?php echo htmlspecialchars($record['crates_count']); ?>"
                                                     data-laying-rate="<?php echo htmlspecialchars($record['laying_rate']); ?>"
                                                     data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
@@ -487,6 +488,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                               data-egg-production="<?php echo htmlspecialchars($record['egg_production']); ?>"
                                                               data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                               data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                              data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                               data-crates-count="<?php echo htmlspecialchars($record['crates_count']); ?>"
                                                               data-laying-rate="<?php echo htmlspecialchars($record['laying_rate']); ?>"
                                                               data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
@@ -861,6 +863,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             mortality: '#mortality',
             eggProduction: '#eggProduction',
             feedConsumption: '#feedConsumption',
+            feedItemId: '#feedItemId',
             waterConsumption: '#waterConsumption',
             cratesCount: '#cratesCount',
             layingRate: '#layingRate',

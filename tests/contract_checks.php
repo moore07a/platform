@@ -120,6 +120,8 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
     assertContains("feed_category = '{$feedCategory}'", $dailyRecord, "{$dailyPage} must show only matching feed inventory items.");
     assertContains('syncDailyFeedConsumption(', $dailyRecord, "{$dailyPage} must synchronize daily consumption with current feed stock.");
     assertContains('$checkSql .= " FOR UPDATE"', $dailyRecord, "{$dailyPage} must lock an existing daily record before reading its feed movement.");
+    assertContains('data-feed-item-id=', $dailyRecord, "{$dailyPage} edit controls must retain the linked feed item.");
+    assertContains("feedItemId: '#feedItemId'", $dailyRecord, "{$dailyPage} edit modal must prefill the linked feed item.");
     assertTrue(
         strpos($dailyRecord, '$pdo->beginTransaction()') < strpos($dailyRecord, '$checkStmt->execute($checkParams)'),
         "{$dailyPage} must begin its transaction before looking up an existing daily record."
@@ -128,6 +130,13 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
 $inventoryFunctions = readFileOrFail($root . '/includes/functions.php');
 assertContains("transaction_type = 'used'", $inventoryFunctions, 'Daily feed deductions must be recorded as auditable used-stock movements.');
 assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lock stock while validating availability.');
+assertContains('stockTransactionHasDailyFeedLinks', $inventoryFunctions, 'Ledger mutations must be able to identify daily-record-managed movements.');
+assertContains('would make stock negative on its transaction date', $inventoryFunctions, 'Backdated movements must not create a negative historical balance.');
+foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/ruminant_feeds_record.php'] as $feedLedgerPage) {
+    $feedLedger = readFileOrFail($root . '/' . $feedLedgerPage);
+    assertContains('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE', $feedLedger, "{$feedLedgerPage} must lock stock before adding a movement.");
+    assertContains('stockTransactionHasDailyFeedLinks(', $feedLedger, "{$feedLedgerPage} must protect daily-record-managed movements.");
+}
 assertContains('foreach (allowedFeedCategories() as $category)', $inventory, 'The feed type dropdown must show only subscribed feed classifications.');
 assertContains('in_array($feedCategory, allowedFeedCategories(), true)', $inventory, 'Inventory must reject feed classifications outside the farm subscription.');
 

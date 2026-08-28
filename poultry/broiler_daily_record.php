@@ -363,6 +363,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                     data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
                                                     data-mortality="<?php echo htmlspecialchars($record['mortality']); ?>"
                                                     data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                    data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                     data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                     data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
                                                     data-birds-age="<?php echo htmlspecialchars($record['birds_age']); ?>"
@@ -465,6 +466,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                                 data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
                                                                 data-mortality="<?php echo htmlspecialchars($record['mortality']); ?>"
                                                                 data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                                data-feed-item-id="<?php echo htmlspecialchars($record['feed_item_id'] ?? ''); ?>"
                                                                 data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                                 data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
                                                                 data-birds-age="<?php echo htmlspecialchars($record['birds_age']); ?>"
@@ -743,6 +745,7 @@ if (cycleSelector) {
             openingStock: '#openingStock',
             mortality: '#mortality',
             feedConsumption: '#feedConsumption',
+            feedItemId: '#feedItemId',
             waterConsumption: '#waterConsumption',
             medications: '#medications',
             remarks: '#remarks'
