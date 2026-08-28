@@ -213,6 +213,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         }
 
+        $receivedDate = trim($_POST['received_date'] ?? '');
+        $parsedReceivedDate = DateTimeImmutable::createFromFormat('!Y-m-d', $receivedDate);
+        $receivedDateIsValid = $parsedReceivedDate
+            && $parsedReceivedDate->format('Y-m-d') === $receivedDate;
+
+        if (!$receivedDateIsValid) {
+            $_SESSION['error'] = "Please select a valid initial stock date.";
+            header('Location: inventory.php');
+            exit();
+        }
+
         $feedCategory = $_POST['feed_category'] ?? 'general';
         $farmType = $_POST['farm_type'];
 
@@ -243,32 +254,45 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             exit();
         }
 
-        $stmt = $pdo->prepare("INSERT INTO stock_items
-            (farm_id, item_name, category_id, current_stock, min_stock_level, unit, farm_type, feed_category, unit_cost)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        try {
+            $pdo->beginTransaction();
 
-        $stmt->execute([
-            $currentFarmId, $_POST['item_name'],
-            $categoryId,
-            $_POST['initial_stock'],
-            $_POST['min_stock'],
-            $_POST['unit'],
-            $farmType,
-            $feedCategory,
-            isset($_POST['unit_cost']) ? max(0, (float) $_POST['unit_cost']) : 0
-        ]);
+            $stmt = $pdo->prepare("INSERT INTO stock_items
+                (farm_id, item_name, category_id, current_stock, min_stock_level, unit, farm_type, feed_category, unit_cost)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
 
-        $itemId = $pdo->lastInsertId();
+            $stmt->execute([
+                $currentFarmId, $_POST['item_name'],
+                $categoryId,
+                $_POST['initial_stock'],
+                $_POST['min_stock'],
+                $_POST['unit'],
+                $farmType,
+                $feedCategory,
+                isset($_POST['unit_cost']) ? max(0, (float) $_POST['unit_cost']) : 0
+            ]);
 
-        $transStmt = $pdo->prepare("INSERT INTO stock_transactions (farm_id, stock_item_id, transaction_type, quantity, previous_stock, new_stock, transaction_date, remarks, user_id, farm_type) VALUES (?, ?, 'received', ?, 0, ?, ?, 'Initial stock entry', ?, ?)");
-        $transStmt->execute([
-            $currentFarmId, $itemId,
-            $_POST['initial_stock'],
-            $_POST['initial_stock'],
-            date('Y-m-d'),
-            $_SESSION['user_id'] ?? null,
-            $farmType
-        ]);
+            $itemId = $pdo->lastInsertId();
+
+            $transStmt = $pdo->prepare("INSERT INTO stock_transactions (farm_id, stock_item_id, transaction_type, quantity, previous_stock, new_stock, transaction_date, remarks, user_id, farm_type) VALUES (?, ?, 'received', ?, 0, ?, ?, 'Initial stock entry', ?, ?)");
+            $transStmt->execute([
+                $currentFarmId, $itemId,
+                $_POST['initial_stock'],
+                $_POST['initial_stock'],
+                $receivedDate,
+                $_SESSION['user_id'] ?? null,
+                $farmType
+            ]);
+
+            $pdo->commit();
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            $_SESSION['error'] = "Could not add the inventory item. Please try again.";
+            header('Location: inventory.php');
+            exit();
+        }
 
         $_SESSION['success'] = "Item added successfully!";
         header('Location: inventory.php');
@@ -1097,6 +1121,13 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                                     <label>Unit Cost (₦)</label>
                                     <input type="number" name="unit_cost" class="form-control" step="0.01" min="0" placeholder="0.00">
                                     <small class="text-muted">Used for valuing stock on dashboards.</small>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label for="receivedDate">Initial Stock Date</label>
+                                    <input type="date" name="received_date" id="receivedDate"
+                                           class="form-control js-calendar-input"
+                                           value="<?php echo date('Y-m-d'); ?>" required>
+                                    <small class="text-muted">The date the opening stock was received or counted.</small>
                                 </div>
                             </div>
                         </div>

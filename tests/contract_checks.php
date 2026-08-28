@@ -105,6 +105,25 @@ assertContains('INSERT INTO stock_items', $inventory, 'Inventory must create sto
 assertContains('(farm_id, item_name, category_id', $inventory, 'New stock items must be assigned to the active farm.');
 assertContains('foreach (allowedFeedCategories() as $category)', $inventory, 'The feed type dropdown must show only subscribed feed classifications.');
 assertContains('in_array($feedCategory, allowedFeedCategories(), true)', $inventory, 'Inventory must reject feed classifications outside the farm subscription.');
+assertContains('name="received_date"', $inventory, 'New inventory items must provide an initial stock calendar date.');
+assertContains('$parsedReceivedDate->format(\'Y-m-d\') === $receivedDate', $inventory, 'Inventory must validate the initial stock date.');
+assertContains('$receivedDate,', $inventory, 'The selected initial stock date must be recorded on the opening transaction.');
+
+$feedInventory = readFileOrFail($root . '/includes/feed_inventory.php');
+assertContains("feed_category = ? AND is_active = 1", $feedInventory, 'Daily records must list only active feed inventory in their own classification.');
+assertContains('FOR UPDATE', $feedInventory, 'Feed deductions must lock inventory while balances are adjusted.');
+assertContains("transaction_type, quantity", $feedInventory, 'Automatic consumption must produce an auditable stock transaction.');
+assertContains('Insufficient', $feedInventory, 'Automatic consumption must reject insufficient feed stock.');
+
+foreach (['poultry/layers_daily_record.php', 'poultry/broiler_daily_record.php', 'ruminant/ruminant_daily_record.php'] as $dailyRecordPath) {
+    $dailyRecord = readFileOrFail($root . '/' . $dailyRecordPath);
+    assertContains('name="feed_stock_item_id"', $dailyRecord, "{$dailyRecordPath} must let the user select consumed feed inventory.");
+    assertContains('syncFeedConsumptionInventory(', $dailyRecord, "{$dailyRecordPath} must synchronize consumption with inventory.");
+    assertContains('$pdo->beginTransaction()', $dailyRecord, "{$dailyRecordPath} must save records and inventory atomically.");
+}
+
+$deleteRecord = readFileOrFail($root . '/api/delete_record.php');
+assertContains('reverseFeedConsumptionInventory(', $deleteRecord, 'Deleting a poultry daily record must restore linked feed inventory.');
 
 $navbar = readFileOrFail($root . '/navbar.php');
 assertContains('!isPlatformOwner() && hasPermission', $navbar, 'Platform owners should not be sent to farm-only user management.');

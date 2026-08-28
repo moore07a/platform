@@ -24,20 +24,26 @@ if (!$isOwnerOrAdmin) {
 }
 
 if ($type === 'layer') {
-    $sql = "SELECT * FROM layer_daily_records WHERE record_date = ? AND farm_id = ?";
+    $sql = "SELECT dr.*, fcil.stock_item_id AS feed_stock_item_id FROM layer_daily_records dr
+            LEFT JOIN feed_consumption_inventory_links fcil
+              ON fcil.farm_id = dr.farm_id AND fcil.record_type = 'layer' AND fcil.record_id = dr.id
+            WHERE dr.record_date = ? AND dr.farm_id = ?";
     $params = [$date, requireCurrentFarmId()];
     if ($cycleId > 0) {
-        $sql .= " AND cycle_id = ?";
+        $sql .= " AND dr.cycle_id = ?";
         $params[] = $cycleId;
     }
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $record = $stmt->fetch(PDO::FETCH_ASSOC);
 } elseif ($type === 'broiler') {
-    $sql = "SELECT * FROM broiler_daily_records WHERE record_date = ? AND farm_id = ?";
+    $sql = "SELECT dr.*, fcil.stock_item_id AS feed_stock_item_id FROM broiler_daily_records dr
+            LEFT JOIN feed_consumption_inventory_links fcil
+              ON fcil.farm_id = dr.farm_id AND fcil.record_type = 'broiler' AND fcil.record_id = dr.id
+            WHERE dr.record_date = ? AND dr.farm_id = ?";
     $params = [$date, requireCurrentFarmId()];
     if ($cycleId > 0) {
-        $sql .= " AND cycle_id = ?";
+        $sql .= " AND dr.cycle_id = ?";
         $params[] = $cycleId;
     }
     $stmt = $pdo->prepare($sql);
@@ -49,11 +55,13 @@ if ($type === 'layer') {
     }
 
     $animalType = strtolower(trim($_GET['animal_type']));
-    $sql = "SELECT * FROM ruminant_daily_records
-                           WHERE record_date = ? AND LOWER(animal_type) = ? AND farm_id = ?";
+    $sql = "SELECT dr.*, fcil.stock_item_id AS feed_stock_item_id FROM ruminant_daily_records dr
+            LEFT JOIN feed_consumption_inventory_links fcil
+              ON fcil.farm_id = dr.farm_id AND fcil.record_type = 'ruminant' AND fcil.record_id = dr.id
+            WHERE dr.record_date = ? AND LOWER(dr.animal_type) = ? AND dr.farm_id = ?";
     $params = [$date, $animalType, requireCurrentFarmId()];
     if ($cycleId > 0) {
-        $sql .= " AND cycle_id = ?";
+        $sql .= " AND dr.cycle_id = ?";
         $params[] = $cycleId;
     }
     $stmt = $pdo->prepare($sql);

@@ -1,6 +1,7 @@
 <?php require_once(dirname(__DIR__) . '/init.php'); ?>
 <?php
 require_once(__DIR__ . '/../config.php');
+require_once(__DIR__ . '/../includes/feed_inventory.php');
 requireLogin();
 
 // Check access
@@ -17,6 +18,7 @@ $selectedCycleId = isset($_GET['cycle_id']) ? (int)$_GET['cycle_id'] : 0;
 $monthSelectorDate = date('Y-m-d', strtotime($yearMonth . '-' . min((int)date('d'), (int)date('t', strtotime($yearMonth . '-01')))));
 
 $tenantFarmId = requireCurrentFarmId();
+$feedInventoryItems = feedInventoryItems($pdo, $tenantFarmId, 'broiler');
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
 $activeCycles = [];
 if ($cycleEnabled) {
@@ -27,13 +29,17 @@ if ($cycleEnabled) {
 
 // Get records for the month
 $records = [];
-$query = "SELECT * FROM broiler_daily_records WHERE farm_id = ? AND DATE_FORMAT(record_date, '%Y-%m') = ?";
+$query = "SELECT dr.*, fcil.stock_item_id AS feed_stock_item_id
+          FROM broiler_daily_records dr
+          LEFT JOIN feed_consumption_inventory_links fcil
+            ON fcil.farm_id = dr.farm_id AND fcil.record_type = 'broiler' AND fcil.record_id = dr.id
+          WHERE dr.farm_id = ? AND DATE_FORMAT(dr.record_date, '%Y-%m') = ?";
 $params = [$tenantFarmId, $yearMonth];
 if ($cycleEnabled && $selectedCycleId > 0) {
-    $query .= " AND cycle_id = ?";
+    $query .= " AND dr.cycle_id = ?";
     $params[] = $selectedCycleId;
 }
-$query .= " ORDER BY record_date";
+$query .= " ORDER BY dr.record_date";
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $records = $stmt->fetchAll();
@@ -101,7 +107,11 @@ if ($cycleEnabled && $selectedCycleId === 0) {
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $recordDate = $_POST['record_date'];
+    $feedConsumption = (float)($_POST['feed_consumption'] ?? 0);
+    $feedStockItemId = !empty($_POST['feed_stock_item_id']) ? (int)$_POST['feed_stock_item_id'] : null;
 
+    try {
+    $pdo->beginTransaction();
     // Check if record exists
     $checkSql = "SELECT id FROM broiler_daily_records WHERE farm_id = ? AND record_date = ?";
     $checkParams = [$tenantFarmId, $recordDate];
@@ -112,7 +122,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $checkStmt = $pdo->prepare($checkSql);
     $checkStmt->execute($checkParams);
 
-    if ($checkStmt->fetch()) {
+    $existingRecordId = (int)($checkStmt->fetchColumn() ?: 0);
+    if ($existingRecordId > 0) {
         // Update existing record
         $stmt = $pdo->prepare("UPDATE broiler_daily_records SET
             opening_stock = ?, mortality = ?, feed_consumption_bags = ?,
@@ -121,7 +132,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         $updateParams = [
             $_POST['opening_stock'],
             $_POST['mortality'],
-            $_POST['feed_consumption'],
+            $feedConsumption,
             $_POST['water_consumption'],
             $_POST['medications'],
             $_POST['birds_age'],
@@ -133,6 +144,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             $updateParams[] = $selectedCycleId;
         }
         $stmt->execute($updateParams);
+        $recordId = $existingRecordId;
     } else {
         // Insert new record
         $stmt = $pdo->prepare("INSERT INTO broiler_daily_records
@@ -145,16 +157,25 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             $recordDate,
             $_POST['opening_stock'],
             $_POST['mortality'],
-            $_POST['feed_consumption'],
+            $feedConsumption,
             $_POST['water_consumption'],
             $_POST['medications'],
             $_POST['birds_age'],
             $_POST['remarks'],
             $_SESSION['user_id']
         ]);
+        $recordId = (int)$pdo->lastInsertId();
     }
 
+    syncFeedConsumptionInventory($pdo, $tenantFarmId, 'broiler', $recordId, $feedStockItemId,
+        $feedConsumption, $recordDate, (int)$_SESSION['user_id']);
+    $pdo->commit();
+
     $_SESSION['success'] = "Broiler daily record saved successfully!";
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $_SESSION['error'] = $e->getMessage();
+    }
     $redirectMonth = date('Y-m', strtotime($recordDate));
     header("Location: broiler_daily_record.php?month=" . $redirectMonth . "&cycle_id=" . (int)$selectedCycleId);
     exit();
@@ -369,6 +390,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                     data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
                                                     data-mortality="<?php echo htmlspecialchars($record['mortality']); ?>"
                                                     data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                    data-feed-stock-item-id="<?php echo (int)($record['feed_stock_item_id'] ?? 0); ?>"
                                                     data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                     data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
                                                     data-birds-age="<?php echo htmlspecialchars($record['birds_age']); ?>"
@@ -471,6 +493,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                                 data-opening-stock="<?php echo htmlspecialchars($record['opening_stock']); ?>"
                                                                 data-mortality="<?php echo htmlspecialchars($record['mortality']); ?>"
                                                                 data-feed-consumption="<?php echo htmlspecialchars($record['feed_consumption_bags']); ?>"
+                                                                data-feed-stock-item-id="<?php echo (int)($record['feed_stock_item_id'] ?? 0); ?>"
                                                                 data-water-consumption="<?php echo htmlspecialchars($record['water_consumption_liters']); ?>"
                                                                 data-medications="<?php echo htmlspecialchars($record['medications']); ?>"
                                                                 data-birds-age="<?php echo htmlspecialchars($record['birds_age']); ?>"
@@ -547,6 +570,19 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                 <label>Feed Consumption (25kg/bag)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
                                        id="feedConsumption" step="0.01" min="0" required>
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label for="feedStockItem">Feed Inventory Item</label>
+                                <select name="feed_stock_item_id" id="feedStockItem" class="form-select">
+                                    <option value="">Select broiler feed</option>
+                                    <?php foreach ($feedInventoryItems as $feedItem): ?>
+                                        <option value="<?php echo (int)$feedItem['id']; ?>">
+                                            <?php echo htmlspecialchars($feedItem['item_name']); ?>
+                                            (<?php echo htmlspecialchars($feedItem['current_stock'] . ' ' . $feedItem['unit']); ?> available)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <small class="text-muted">Required when feed consumption is greater than zero.</small>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label>Water Consumption (liters)</label>
@@ -666,6 +702,7 @@ if (cycleSelector) {
                     document.getElementById('openingStock').value = data.opening_stock || '';
                     document.getElementById('mortality').value = data.mortality || 0;
                     document.getElementById('feedConsumption').value = data.feed_consumption_bags || '';
+                    document.getElementById('feedStockItem').value = data.feed_stock_item_id || '';
                     document.getElementById('waterConsumption').value = data.water_consumption_liters || '';
                     document.getElementById('medications').value = data.medications || '';
                     document.getElementById('remarks').value = data.remarks || '';

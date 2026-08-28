@@ -18,10 +18,11 @@ $startDate = date('Y-m-01', strtotime($yearMonth));
 $endDate = date('Y-m-t', strtotime($yearMonth));
 
 // Get feed transactions for the month
-$query = "SELECT t.*, s.item_name, s.unit, u.full_name
+$query = "SELECT t.*, s.item_name, s.unit, u.full_name, fcil.id AS consumption_link_id
           FROM stock_transactions t
           JOIN stock_items s ON t.stock_item_id = s.id
           LEFT JOIN users u ON t.user_id = u.id AND u.farm_id = t.farm_id
+          LEFT JOIN feed_consumption_inventory_links fcil ON fcil.stock_transaction_id = t.id AND fcil.farm_id = t.farm_id
           WHERE t.farm_id = ? AND s.farm_id = ? AND t.transaction_date BETWEEN ? AND ?
           AND s.farm_type IN ('poultry', 'both')
           AND s.feed_category = 'broiler'
@@ -409,8 +410,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
                                             <td>
                                                 <small><?php echo $trans['full_name']; ?></small>
                                             </td>
-                                            <?php if ($isOwner): ?>
+                                        <?php if ($isOwner): ?>
                                             <td>
+                                                <?php if (!empty($trans['consumption_link_id'])): ?>
+                                                    <span class="badge bg-info text-dark">Managed by daily record</span>
+                                                <?php else: ?>
                                                 <div class="d-flex gap-2">
                                                     <button
                                                         type="button"
@@ -431,6 +435,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
                                                         </button>
                                                     </form>
                                                 </div>
+                                                <?php endif; ?>
                                             </td>
                                             <?php endif; ?>
                                         </tr>

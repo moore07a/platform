@@ -2,6 +2,7 @@
 <?php
 require_once(__DIR__ . '/../config.php');
 require_once(__DIR__ . '/api_helpers.php');
+require_once(__DIR__ . '/../includes/feed_inventory.php');
 requireLogin();
 require_http_method('POST');
 require_csrf_token();
@@ -18,6 +19,8 @@ if (($type === 'layer' || $type === 'broiler') && !checkAccess('poultry')) {
 }
 
 try {
+    $farmId = requireCurrentFarmId();
+    $pdo->beginTransaction();
     if ($type === 'layer') {
         $stmt = $pdo->prepare("DELETE FROM layer_daily_records WHERE id = ? AND farm_id = ?");
     } elseif ($type === 'broiler') {
@@ -26,10 +29,13 @@ try {
         send_json(['success' => false, 'error' => 'Unsupported record type'], 400);
     }
     
-    $stmt->execute([$id, requireCurrentFarmId()]);
+    reverseFeedConsumptionInventory($pdo, $farmId, $type, (int)$id);
+    $stmt->execute([$id, $farmId]);
+    $pdo->commit();
     
     send_json(['success' => true, 'message' => 'Record deleted successfully']);
 } catch (Exception $e) {
+    if ($pdo->inTransaction()) $pdo->rollBack();
     log_app_error('delete_record_failed', ['error' => $e->getMessage(), 'type' => $type, 'id' => $id]);
     send_json(['success' => false, 'error' => $e->getMessage()], 400);
 }
