@@ -17,8 +17,8 @@ $canDeleteRecords = isPlatformOwner() || hasRole('farm_admin');
 $canEditRecords = $canDeleteRecords || hasRole('ruminant_manager');
 $managedTypes = ['cattle', 'goat', 'sheep', 'other'];
 $tenantFarmId = requireCurrentFarmId();
-$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit FROM stock_items WHERE farm_id = ? AND feed_category = 'ruminant' AND is_active = 1 ORDER BY item_name");
-$feedItemsStmt->execute([$tenantFarmId]);
+$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit, is_active FROM stock_items WHERE farm_id = ? AND feed_category = 'ruminant' AND LOWER(TRIM(unit)) IN ('kg', 'kgs', 'kilogram', 'kilograms') AND (is_active = 1 OR id IN (SELECT feed_item_id FROM ruminant_daily_records WHERE farm_id = ? AND feed_stock_transaction_id IS NOT NULL)) ORDER BY is_active DESC, item_name");
+$feedItemsStmt->execute([$tenantFarmId, $tenantFarmId]);
 $feedItems = $feedItemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
 $activeCycles = [];
@@ -49,22 +49,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_record']) && $
     $recordId = (int)($_POST['record_id'] ?? 0);
 
     if ($recordId > 0) {
-        $recordCheck = $pdo->prepare("SELECT animal_type, feed_stock_transaction_id FROM ruminant_daily_records WHERE id = ? AND farm_id = ?");
-        $recordCheck->execute([$recordId, $tenantFarmId]);
-        $record = $recordCheck->fetch();
+        try {
+            $pdo->beginTransaction();
+            $recordCheck = $pdo->prepare("SELECT animal_type, feed_stock_transaction_id FROM ruminant_daily_records WHERE id = ? AND farm_id = ? FOR UPDATE");
+            $recordCheck->execute([$recordId, $tenantFarmId]);
+            $record = $recordCheck->fetch();
 
-        if ($record && in_array(strtolower($record['animal_type']), $managedTypes, true)) {
-            try {
-                $pdo->beginTransaction();
+            if ($record && in_array(strtolower($record['animal_type']), $managedTypes, true)) {
                 reverseDailyFeedConsumption($pdo, $tenantFarmId, $record['feed_stock_transaction_id'] ? (int)$record['feed_stock_transaction_id'] : null);
                 $deleteStmt = $pdo->prepare("DELETE FROM ruminant_daily_records WHERE id = ? AND farm_id = ?");
                 $deleteStmt->execute([$recordId, $tenantFarmId]);
                 $pdo->commit();
                 $_SESSION['success'] = "Ruminant daily record deleted successfully.";
-            } catch (Throwable $e) {
-                if ($pdo->inTransaction()) $pdo->rollBack();
-                $_SESSION['error'] = $e->getMessage();
+            } else {
+                $pdo->rollBack();
             }
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $_SESSION['error'] = $e->getMessage();
         }
     }
 
@@ -234,13 +236,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     };
     $recordDate = $_POST['record_date'];
     $animalType = strtolower(trim($_POST['animal_type']));
-    $feedQuantity = (float)$parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedQuantityRaw = $parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedQuantity = (float)$feedQuantityRaw;
     $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
 
     try {
+        if (!is_numeric($feedQuantityRaw) || !is_finite($feedQuantity) || $feedQuantity < 0) {
+            throw new RuntimeException('Feed consumption must be a non-negative number.');
+        }
         $pdo->beginTransaction();
         // Lock the record before reading its linked movement so concurrent edits serialize.
-        $checkSql = "SELECT id, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_kg, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
         $checkParams = [$tenantFarmId, $recordDate, $animalType];
         if ($cycleEnabled && $selectedCycleId > 0) {
             $checkSql .= " AND cycle_id = ?";
@@ -251,7 +257,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         $checkStmt->execute($checkParams);
         $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
 
-        $movementId = syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'ruminant', $_SESSION['user_id'] ?? null);
+        $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_kg'] === $feedQuantity && $feedItemId === 0)
+            ? null
+            : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'ruminant', 'kg', $_SESSION['user_id'] ?? null);
     if ($existingRecord) {
         // Update existing record
         $stmt = $pdo->prepare("UPDATE ruminant_daily_records SET
@@ -761,15 +769,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label for="feedItemId">Ruminant Feed Item</label>
-                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2" required>
+                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2">
                                     <option value="">Select feed from current stock</option>
                                     <?php foreach ($feedItems as $feedItem): ?>
-                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available</option>
+                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available<?php echo !(int)$feedItem['is_active'] ? ' (inactive; linked records only)' : ''; ?></option>
                                     <?php endforeach; ?>
                                 </select>
                                 <label>Feed Consumption (kg)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
-                                       id="feedConsumption" step="0.1" min="0" required>
+                                       id="feedConsumption" oninput="document.getElementById('feedItemId').required = parseFloat(this.value) > 0" step="0.1" min="0" required>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label>Water Consumption (liters)</label>

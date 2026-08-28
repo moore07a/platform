@@ -17,8 +17,8 @@ $selectedCycleId = isset($_GET['cycle_id']) ? (int)$_GET['cycle_id'] : 0;
 $monthSelectorDate = date('Y-m-d', strtotime($yearMonth . '-' . min((int)date('d'), (int)date('t', strtotime($yearMonth . '-01')))));
 
 $tenantFarmId = requireCurrentFarmId();
-$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit FROM stock_items WHERE farm_id = ? AND feed_category = 'broiler' AND is_active = 1 ORDER BY item_name");
-$feedItemsStmt->execute([$tenantFarmId]);
+$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit, is_active FROM stock_items WHERE farm_id = ? AND feed_category = 'broiler' AND LOWER(TRIM(unit)) IN ('bag', 'bags') AND (is_active = 1 OR id IN (SELECT feed_item_id FROM broiler_daily_records WHERE farm_id = ? AND feed_stock_transaction_id IS NOT NULL)) ORDER BY is_active DESC, item_name");
+$feedItemsStmt->execute([$tenantFarmId, $tenantFarmId]);
 $feedItems = $feedItemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
 $activeCycles = [];
@@ -105,13 +105,17 @@ if ($cycleEnabled && $selectedCycleId === 0) {
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $parseNumeric = static function ($value) { return str_replace(',', '', trim((string)$value)); };
     $recordDate = $_POST['record_date'];
-    $feedQuantity = (float)$parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedQuantityRaw = $parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedQuantity = (float)$feedQuantityRaw;
     $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
 
 
     try {
+        if (!is_numeric($feedQuantityRaw) || !is_finite($feedQuantity) || $feedQuantity < 0) {
+            throw new RuntimeException('Feed consumption must be a non-negative number.');
+        }
         $pdo->beginTransaction();
-        $checkSql = "SELECT id, feed_stock_transaction_id FROM broiler_daily_records WHERE farm_id = ? AND record_date = ?";
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_bags, feed_stock_transaction_id FROM broiler_daily_records WHERE farm_id = ? AND record_date = ?";
         $checkParams = [$tenantFarmId, $recordDate];
         if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
         $checkSql .= " FOR UPDATE";
@@ -119,7 +123,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         $checkStmt->execute($checkParams);
         $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
 
-        $movementId = syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'broiler', $_SESSION['user_id'] ?? null);
+        $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_bags'] === $feedQuantity && $feedItemId === 0)
+            ? null
+            : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'broiler', 'bags', $_SESSION['user_id'] ?? null);
         if ($existingRecord) {
             $stmt = $pdo->prepare("UPDATE broiler_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
             water_consumption_liters = ?, medications = ?, birds_age = ?, remarks = ? WHERE id = ? AND farm_id = ?");
@@ -533,15 +539,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                         <div class="row">
                             <div class="col-md-6 mb-3">
                                 <label for="feedItemId">Broiler Feed Item</label>
-                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2" required>
+                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2">
                                     <option value="">Select feed from current stock</option>
                                     <?php foreach ($feedItems as $feedItem): ?>
-                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available</option>
+                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available<?php echo !(int)$feedItem['is_active'] ? ' (inactive; linked records only)' : ''; ?></option>
                                     <?php endforeach; ?>
                                 </select>
                                 <label>Feed Consumption (bags)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
-                                       id="feedConsumption" step="0.01" min="0" required>
+                                       id="feedConsumption" oninput="document.getElementById('feedItemId').required = parseFloat(this.value) > 0" step="0.01" min="0" required>
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label>Water Consumption (liters)</label>

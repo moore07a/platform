@@ -178,6 +178,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ?');
             $itemStmt->execute([$categoryId, $currentFarmId]);
             $items = $itemStmt->fetchAll();
+            foreach ($items as $itemRow) {
+                if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemRow['id'])) {
+                    throw new RuntimeException('This category contains feed used by daily records. Remove those records before deleting the category.');
+                }
+            }
 
             if (!empty($items)) {
                 $deleteTrans = $pdo->prepare('DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?');
@@ -198,9 +203,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             if (!empty($items)) {
                 $_SESSION['success'] .= ' Related stock items were also removed.';
             }
-        } catch (PDOException $e) {
-            $pdo->rollBack();
-            $_SESSION['error'] = 'Could not delete category. Please try again.';
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $_SESSION['error'] = $e->getMessage();
         }
 
         header('Location: inventory.php');
@@ -295,8 +300,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         $type = $_POST['transaction_type'];
         $quantity = $_POST['quantity'];
         
-        // Get current stock and valuation
-        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ?");
+        try {
+        $pdo->beginTransaction();
+        // Lock the same row used by automatic daily-feed deductions.
+        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
         $itemStmt->execute([$itemId, $currentFarmId]);
         $item = $itemStmt->fetch();
         
@@ -316,9 +323,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 }
             } else {
                 if ($quantity > $previousStock) {
-                    $_SESSION['error'] = "Insufficient stock. Available: {$previousStock}";
-                    header('Location: inventory.php');
-                    exit();
+                    throw new RuntimeException("Insufficient stock. Available: {$previousStock}");
                 }
                 $newStock = $previousStock - $quantity;
             }
@@ -343,10 +348,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $item['farm_type'], $currentFarmId
             ]);
             
+            recalculateStockTransactionBalances($pdo, $currentFarmId, (int)$itemId);
+            $pdo->commit();
             $_SESSION['success'] = "Stock updated successfully!";
-            header('Location: inventory.php');
-            exit();
+        } else {
+            throw new RuntimeException('Inventory item not found.');
         }
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $_SESSION['error'] = $e->getMessage();
+        }
+        header('Location: inventory.php');
+        exit();
     }
     
     if (isset($_POST['delete_item'])) {
@@ -405,8 +418,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         try {
             $pdo->beginTransaction();
+            if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemId)) {
+                throw new RuntimeException('This item is linked to daily feed records and cannot be permanently deleted.');
+            }
 
-            // Always clear related transactions so the item can be removed cleanly
+            // Clear unlinked transaction history before removing the item.
             $deleteTransactions = $pdo->prepare("DELETE FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?");
             $deleteTransactions->execute([$itemId, $currentFarmId]);
 
@@ -416,9 +432,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $pdo->commit();
 
             $_SESSION['success'] = "Item and its history permanently deleted.";
-        } catch (Exception $e) {
-            $pdo->rollBack();
-            $_SESSION['error'] = "Failed to delete item permanently. Please try again.";
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            $_SESSION['error'] = $e->getMessage();
         }
 
         header('Location: inventory.php');
