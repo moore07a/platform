@@ -17,6 +17,9 @@ $selectedCycleId = isset($_GET['cycle_id']) ? (int)$_GET['cycle_id'] : 0;
 $monthSelectorDate = date('Y-m-d', strtotime($yearMonth . '-' . min((int)date('d'), (int)date('t', strtotime($yearMonth . '-01')))));
 
 $tenantFarmId = requireCurrentFarmId();
+$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit FROM stock_items WHERE farm_id = ? AND feed_category = 'layer' AND is_active = 1 ORDER BY item_name");
+$feedItemsStmt->execute([$tenantFarmId]);
+$feedItems = $feedItemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
 $activeCycles = [];
 if ($cycleEnabled) {
@@ -98,80 +101,46 @@ if ($recordCount > 0) {
 }
 
 // Handle form submission
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    if (isset($_POST['save_record'])) {
-        $parseNumeric = static function ($value) {
-            return str_replace(',', '', trim((string)$value));
-        };
-        $recordDate = $_POST['record_date'];
-        $eggProduction = (float) $parseNumeric($_POST['egg_production'] ?? 0);
-        $calculatedCrates = round($eggProduction / 30, 2);
+if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
+    $parseNumeric = static function ($value) { return str_replace(',', '', trim((string)$value)); };
+    $recordDate = $_POST['record_date'];
+    $feedQuantity = (float)$parseNumeric($_POST['feed_consumption'] ?? 0);
+    $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
+    $eggProduction = (float)$parseNumeric($_POST['egg_production'] ?? 0);
+    $calculatedCrates = round($eggProduction / 30, 2);
 
-        // Check if record exists
-        $checkSql = "SELECT id FROM layer_daily_records WHERE farm_id = ? AND record_date = ?";
-        $checkParams = [$tenantFarmId, $recordDate];
-        if ($cycleEnabled && $selectedCycleId > 0) {
-            $checkSql .= " AND cycle_id = ?";
-            $checkParams[] = $selectedCycleId;
-        }
-        $checkStmt = $pdo->prepare($checkSql);
-        $checkStmt->execute($checkParams);
+    $checkSql = "SELECT id, feed_stock_transaction_id FROM layer_daily_records WHERE farm_id = ? AND record_date = ?";
+    $checkParams = [$tenantFarmId, $recordDate];
+    if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
+    $checkStmt = $pdo->prepare($checkSql);
+    $checkStmt->execute($checkParams);
+    $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
 
-        if ($checkStmt->fetch()) {
-            // Update existing record
-            $stmt = $pdo->prepare("UPDATE layer_daily_records SET
-                opening_stock = ?, mortality = ?, feed_consumption_bags = ?,
-                water_consumption_liters = ?, medications = ?, egg_production = ?,
-                crates_count = ?, laying_rate = ?, birds_age = ?, remarks = ?
-                WHERE farm_id = ? AND record_date = ?" . (($cycleEnabled && $selectedCycleId > 0) ? " AND cycle_id = ?" : ""));
-            $updateParams = [
-                $parseNumeric($_POST['opening_stock']),
-                $parseNumeric($_POST['mortality']),
-                $parseNumeric($_POST['feed_consumption']),
-                $parseNumeric($_POST['water_consumption']),
-                $_POST['medications'],
-                $eggProduction,
-                $calculatedCrates,
-                $parseNumeric($_POST['laying_rate']),
-                $parseNumeric($_POST['birds_age']),
-                $_POST['remarks'],
-                $tenantFarmId,
-                $recordDate
-            ];
-            if ($cycleEnabled && $selectedCycleId > 0) {
-                $updateParams[] = $selectedCycleId;
-            }
-            $stmt->execute($updateParams);
+    try {
+        $pdo->beginTransaction();
+        $movementId = syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'layer', $_SESSION['user_id'] ?? null);
+        if ($existingRecord) {
+            $stmt = $pdo->prepare("UPDATE layer_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
+                water_consumption_liters = ?, medications = ?, egg_production = ?, crates_count = ?, laying_rate = ?, birds_age = ?, remarks = ? WHERE id = ? AND farm_id = ?");
+            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedItemId ?: null, $movementId,
+                $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
+                $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $existingRecord['id'], $tenantFarmId]);
         } else {
-            // Insert new record
-            $stmt = $pdo->prepare("INSERT INTO layer_daily_records
-                (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags,
-                 water_consumption_liters, medications, egg_production,
-                 crates_count, laying_rate, birds_age, remarks, user_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $tenantFarmId,
-                ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null,
-                $recordDate,
-                $parseNumeric($_POST['opening_stock']),
-                $parseNumeric($_POST['mortality']),
-                $parseNumeric($_POST['feed_consumption']),
-                $parseNumeric($_POST['water_consumption']),
-                $_POST['medications'],
-                $eggProduction,
-                $calculatedCrates,
-                $parseNumeric($_POST['laying_rate']),
-                $parseNumeric($_POST['birds_age']),
-                $_POST['remarks'],
-                $_SESSION['user_id']
-            ]);
+            $stmt = $pdo->prepare("INSERT INTO layer_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, egg_production, crates_count, laying_rate, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$tenantFarmId, ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null, $recordDate,
+                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedItemId ?: null, $movementId,
+                $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
+                $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $_SESSION['user_id']]);
         }
-
+        $pdo->commit();
         $_SESSION['success'] = "Daily record saved successfully!";
-        $redirectMonth = date('Y-m', strtotime($recordDate));
-        header("Location: layers_daily_record.php?month=" . $redirectMonth . "&cycle_id=" . (int)$selectedCycleId);
-        exit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        $_SESSION['error'] = $e->getMessage();
     }
+    $redirectMonth = date('Y-m', strtotime($recordDate));
+    header("Location: layers_daily_record.php?month=" . $redirectMonth . "&cycle_id=" . (int)$selectedCycleId);
+    exit();
 }
 ?>
 <!DOCTYPE html>
@@ -184,6 +153,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 </head>
 <body class="poultry-page">
     <?php include(__DIR__ . '/../navbar.php'); ?>
+    <?php if (isset($_SESSION['error'])): ?>
+        <div class="container-fluid mt-3"><div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <?php echo htmlspecialchars($_SESSION['error']); unset($_SESSION['error']); ?>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        </div></div>
+    <?php endif; ?>
 
     <div class="container-fluid mt-4 poultry-shell">
         <?php if (isset($_SESSION['success'])): ?>
@@ -602,7 +577,14 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
                         <div class="row">
                             <div class="col-md-4 mb-3">
-                                <label>Feed Consumption (25kg/bag)</label>
+                                <label for="feedItemId">Layer Feed Item</label>
+                                <select name="feed_item_id" id="feedItemId" class="form-select mb-2" required>
+                                    <option value="">Select feed from current stock</option>
+                                    <?php foreach ($feedItems as $feedItem): ?>
+                                        <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available</option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <label>Feed Consumption (bags)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
                                        id="feedConsumption" step="0.01" min="0" required>
                             </div>
@@ -779,6 +761,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     document.getElementById('mortality').value = parseNumericInput(data.mortality || 0);
                     document.getElementById('eggProduction').value = parseNumericInput(data.egg_production || '');
                     document.getElementById('feedConsumption').value = parseNumericInput(data.feed_consumption_bags || '');
+                    document.getElementById('feedItemId').value = data.feed_item_id || '';
                     document.getElementById('waterConsumption').value = parseNumericInput(data.water_consumption_liters || '');
                     document.getElementById('cratesCount').value = parseNumericInput(data.crates_count || '');
                     document.getElementById('layingRate').value = parseNumericInput(data.laying_rate || '');

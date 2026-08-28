@@ -103,6 +103,19 @@ assertContains('si.farm_id = ?', $inventory, 'Inventory reads must be scoped to 
 assertContains('INSERT INTO inventory_categories (farm_id', $inventory, 'New categories must be assigned to the active farm.');
 assertContains('INSERT INTO stock_items', $inventory, 'Inventory must create stock items.');
 assertContains('(farm_id, item_name, category_id', $inventory, 'New stock items must be assigned to the active farm.');
+assertContains('name="initial_stock_date"', $inventory, 'New inventory items must provide a calendar date for their opening stock.');
+assertContains("createFromFormat('!Y-m-d', \$initialStockDate)", $inventory, 'The opening stock date must be validated on the server.');
+assertContains("\$parsedInitialStockDate->format('Y-m-d')", $inventory, 'The selected opening stock date must be used by the initial stock transaction.');
+
+foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_record.php' => 'broiler', 'ruminant/ruminant_daily_record.php' => 'ruminant'] as $dailyPage => $feedCategory) {
+    $dailyRecord = readFileOrFail($root . '/' . $dailyPage);
+    assertContains('name="feed_item_id"', $dailyRecord, "{$dailyPage} must let the user select a feed inventory item.");
+    assertContains("feed_category = '{$feedCategory}'", $dailyRecord, "{$dailyPage} must show only matching feed inventory items.");
+    assertContains('syncDailyFeedConsumption(', $dailyRecord, "{$dailyPage} must synchronize daily consumption with current feed stock.");
+}
+$inventoryFunctions = readFileOrFail($root . '/includes/functions.php');
+assertContains("transaction_type = 'used'", $inventoryFunctions, 'Daily feed deductions must be recorded as auditable used-stock movements.');
+assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lock stock while validating availability.');
 assertContains('foreach (allowedFeedCategories() as $category)', $inventory, 'The feed type dropdown must show only subscribed feed classifications.');
 assertContains('in_array($feedCategory, allowedFeedCategories(), true)', $inventory, 'Inventory must reject feed classifications outside the farm subscription.');
 

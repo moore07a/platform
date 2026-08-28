@@ -215,6 +215,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         $feedCategory = $_POST['feed_category'] ?? 'general';
         $farmType = $_POST['farm_type'];
+        $initialStockDate = trim($_POST['initial_stock_date'] ?? '');
+
+        $parsedInitialStockDate = DateTimeImmutable::createFromFormat('!Y-m-d', $initialStockDate);
+        $dateErrors = DateTimeImmutable::getLastErrors();
+        if (!$parsedInitialStockDate || ($dateErrors !== false && ($dateErrors['warning_count'] > 0 || $dateErrors['error_count'] > 0))) {
+            $_SESSION['error'] = "Please select a valid initial stock date.";
+            header('Location: inventory.php');
+            exit();
+        }
 
         if (!in_array($feedCategory, allowedFeedCategories(), true)) {
             $_SESSION['error'] = "That feed type is not enabled for this farm.";
@@ -265,7 +274,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $currentFarmId, $itemId,
             $_POST['initial_stock'],
             $_POST['initial_stock'],
-            date('Y-m-d'),
+            $parsedInitialStockDate->format('Y-m-d'),
             $_SESSION['user_id'] ?? null,
             $farmType
         ]);
@@ -1078,6 +1087,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                             </div>
 
                             <div class="row">
+                                <div class="col-md-4 mb-3">
+                                    <label for="initialStockDate">Initial Stock Date</label>
+                                    <input type="date" name="initial_stock_date" id="initialStockDate" class="form-control"
+                                           value="<?php echo date('Y-m-d'); ?>" required>
+                                    <small class="text-muted">Choose the date this opening stock was received.</small>
+                                </div>
                                 <div class="col-md-4 mb-3">
                                     <label>Initial Stock</label>
                                     <input type="number" name="initial_stock" class="form-control"

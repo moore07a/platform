@@ -1,0 +1,10 @@
+-- Link daily feed-consumption entries to the inventory movement they create.
+ALTER TABLE layer_daily_records ADD COLUMN feed_item_id INT NULL AFTER feed_consumption_bags,
+    ADD COLUMN feed_stock_transaction_id INT NULL AFTER feed_item_id,
+    ADD INDEX idx_layer_feed_item (feed_item_id);
+ALTER TABLE broiler_daily_records ADD COLUMN feed_item_id INT NULL AFTER feed_consumption_bags,
+    ADD COLUMN feed_stock_transaction_id INT NULL AFTER feed_item_id,
+    ADD INDEX idx_broiler_feed_item (feed_item_id);
+ALTER TABLE ruminant_daily_records ADD COLUMN feed_item_id INT NULL AFTER feed_consumption_kg,
+    ADD COLUMN feed_stock_transaction_id INT NULL AFTER feed_item_id,
+    ADD INDEX idx_ruminant_feed_item (feed_item_id);
