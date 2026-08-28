@@ -14,6 +14,13 @@ function assertNotContains(string $needle, string $haystack, string $message): v
     }
 }
 
+function assertTrue(bool $condition, string $message): void
+{
+    if (!$condition) {
+        throw new RuntimeException($message);
+    }
+}
+
 function readFileOrFail(string $path): string
 {
     $content = file_get_contents($path);
@@ -112,6 +119,11 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
     assertContains('name="feed_item_id"', $dailyRecord, "{$dailyPage} must let the user select a feed inventory item.");
     assertContains("feed_category = '{$feedCategory}'", $dailyRecord, "{$dailyPage} must show only matching feed inventory items.");
     assertContains('syncDailyFeedConsumption(', $dailyRecord, "{$dailyPage} must synchronize daily consumption with current feed stock.");
+    assertContains('$checkSql .= " FOR UPDATE"', $dailyRecord, "{$dailyPage} must lock an existing daily record before reading its feed movement.");
+    assertTrue(
+        strpos($dailyRecord, '$pdo->beginTransaction()') < strpos($dailyRecord, '$checkStmt->execute($checkParams)'),
+        "{$dailyPage} must begin its transaction before looking up an existing daily record."
+    );
 }
 $inventoryFunctions = readFileOrFail($root . '/includes/functions.php');
 assertContains("transaction_type = 'used'", $inventoryFunctions, 'Daily feed deductions must be recorded as auditable used-stock movements.');

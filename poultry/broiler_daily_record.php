@@ -109,15 +109,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
 
 
-    $checkSql = "SELECT id, feed_stock_transaction_id FROM broiler_daily_records WHERE farm_id = ? AND record_date = ?";
-    $checkParams = [$tenantFarmId, $recordDate];
-    if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
-    $checkStmt = $pdo->prepare($checkSql);
-    $checkStmt->execute($checkParams);
-    $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
-
     try {
         $pdo->beginTransaction();
+        $checkSql = "SELECT id, feed_stock_transaction_id FROM broiler_daily_records WHERE farm_id = ? AND record_date = ?";
+        $checkParams = [$tenantFarmId, $recordDate];
+        if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
+        $checkSql .= " FOR UPDATE";
+        $checkStmt = $pdo->prepare($checkSql);
+        $checkStmt->execute($checkParams);
+        $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
         $movementId = syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'broiler', $_SESSION['user_id'] ?? null);
         if ($existingRecord) {
             $stmt = $pdo->prepare("UPDATE broiler_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,

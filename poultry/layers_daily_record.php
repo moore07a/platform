@@ -109,15 +109,16 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $eggProduction = (float)$parseNumeric($_POST['egg_production'] ?? 0);
     $calculatedCrates = round($eggProduction / 30, 2);
 
-    $checkSql = "SELECT id, feed_stock_transaction_id FROM layer_daily_records WHERE farm_id = ? AND record_date = ?";
-    $checkParams = [$tenantFarmId, $recordDate];
-    if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
-    $checkStmt = $pdo->prepare($checkSql);
-    $checkStmt->execute($checkParams);
-    $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
-
     try {
         $pdo->beginTransaction();
+        $checkSql = "SELECT id, feed_stock_transaction_id FROM layer_daily_records WHERE farm_id = ? AND record_date = ?";
+        $checkParams = [$tenantFarmId, $recordDate];
+        if ($cycleEnabled && $selectedCycleId > 0) { $checkSql .= " AND cycle_id = ?"; $checkParams[] = $selectedCycleId; }
+        $checkSql .= " FOR UPDATE";
+        $checkStmt = $pdo->prepare($checkSql);
+        $checkStmt->execute($checkParams);
+        $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
         $movementId = syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'layer', $_SESSION['user_id'] ?? null);
         if ($existingRecord) {
             $stmt = $pdo->prepare("UPDATE layer_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,

@@ -237,20 +237,20 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     $feedQuantity = (float)$parseNumeric($_POST['feed_consumption'] ?? 0);
     $feedItemId = (int)($_POST['feed_item_id'] ?? 0);
 
-    // Check if record exists for this date and animal type
-    $checkSql = "SELECT id, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
-    $checkParams = [$tenantFarmId, $recordDate, $animalType];
-    if ($cycleEnabled && $selectedCycleId > 0) {
-        $checkSql .= " AND cycle_id = ?";
-        $checkParams[] = $selectedCycleId;
-    }
-    $checkStmt = $pdo->prepare($checkSql);
-    $checkStmt->execute($checkParams);
-
-    $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
-
     try {
         $pdo->beginTransaction();
+        // Lock the record before reading its linked movement so concurrent edits serialize.
+        $checkSql = "SELECT id, feed_stock_transaction_id FROM ruminant_daily_records WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?";
+        $checkParams = [$tenantFarmId, $recordDate, $animalType];
+        if ($cycleEnabled && $selectedCycleId > 0) {
+            $checkSql .= " AND cycle_id = ?";
+            $checkParams[] = $selectedCycleId;
+        }
+        $checkSql .= " FOR UPDATE";
+        $checkStmt = $pdo->prepare($checkSql);
+        $checkStmt->execute($checkParams);
+        $existingRecord = $checkStmt->fetch(PDO::FETCH_ASSOC);
+
         $movementId = syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'ruminant', $_SESSION['user_id'] ?? null);
     if ($existingRecord) {
         // Update existing record
