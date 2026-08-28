@@ -795,6 +795,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                 }
                 const data = payload ? payload.data : null;
                 if (data) {
+                    document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('birdsAge').value = parseNumericInput(data.birds_age || '');
                     document.getElementById('openingStock').value = parseNumericInput(data.opening_stock || '');
                     document.getElementById('mortality').value = parseNumericInput(data.mortality || 0);
@@ -835,6 +836,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
     // Check existing record
     function checkExistingRecord() {
         const date = document.getElementById('selectedDate').value;
+        document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
         if (selectedCycleId <= 0) {
             resetForm();

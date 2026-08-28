@@ -977,6 +977,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                 }
                 const data = payload ? payload.data : null;
                 if (data) {
+                    document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('openingStock').value = parseNumericInput(data.opening_stock || '');
                     document.getElementById('mortality').value = parseNumericInput(data.mortality || 0);
                     document.getElementById('feedConsumption').value = parseNumericInput(data.feed_consumption_kg || '');
@@ -1019,6 +1020,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         const date = document.getElementById('selectedDate').value;
         const animalType = document.getElementById('animalType').value;
 
+        document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
         document.getElementById('animalTypeHidden').value = animalType;
 

@@ -51,12 +51,12 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_transaction'])) {
         $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
         $itemStmt->execute([$itemId, $tenantFarmId]);
         $item = $itemStmt->fetch();
-        if (!$item) throw new Exception('Selected feed item not found.');
-        if (!is_finite($quantity) || $quantity <= 0) throw new Exception('Quantity must be greater than zero.');
+        if (!$item) throw new RuntimeException('Selected feed item not found.');
+        if (!is_finite($quantity) || $quantity <= 0) throw new RuntimeException('Quantity must be greater than zero.');
 
         $previousStock = (float)$item['current_stock'];
         if ($quantity > $previousStock) {
-            throw new Exception("Insufficient stock. Available: {$previousStock} {$item['unit']}");
+            throw new RuntimeException("Insufficient stock. Available: {$previousStock} {$item['unit']}");
         }
         $newStock = $previousStock - $quantity;
         $pdo->prepare("UPDATE stock_items SET current_stock = ? WHERE id = ? AND farm_id = ?")
@@ -71,9 +71,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_transaction'])) {
         recalculateStockTransactionBalances($pdo, $tenantFarmId, $itemId, $date, $movementId);
         $pdo->commit();
         $_SESSION['success'] = 'Feed transaction recorded successfully!';
-    } catch (Throwable $e) {
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Feed ledger database error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to update the feed ledger. Please try again.';
+    } catch (RuntimeException $e) {
         if ($pdo->inTransaction()) $pdo->rollBack();
         $_SESSION['error'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unexpected feed ledger error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to update the feed ledger. Please try again.';
     }
     header("Location: layer_feeds.php?month={$redirectMonth}");
     exit();
@@ -89,7 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
         $discoverStmt = $pdo->prepare("SELECT stock_item_id FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry'");
         $discoverStmt->execute([$transactionId, $tenantFarmId]);
         $discoveredItemId = (int)$discoverStmt->fetchColumn();
-        if (!$discoveredItemId) throw new Exception('Transaction not found.');
+        if (!$discoveredItemId) throw new RuntimeException('Transaction not found.');
 
         $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
         $itemStmt->execute([$discoveredItemId, $tenantFarmId]);
@@ -100,14 +108,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
         $transaction = $transStmt->fetch();
 
         if (!$transaction) {
-            throw new Exception('Transaction not found.');
+            throw new RuntimeException('Transaction not found.');
         }
         if (stockTransactionHasDailyFeedLinks($pdo, $tenantFarmId, (int)$transactionId)) {
-            throw new Exception('This transaction is managed by a daily feed record and cannot be deleted here.');
+            throw new RuntimeException('This transaction is managed by a daily feed record and cannot be deleted here.');
         }
 
         if (!$item) {
-            throw new Exception('Related feed item not found.');
+            throw new RuntimeException('Related feed item not found.');
         }
 
         $adjustedStock = $item['current_stock'];
@@ -116,7 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
             : $transaction['quantity'];
 
         if ($adjustedStock < 0) {
-            throw new Exception('Deleting this record would create negative stock.');
+            throw new RuntimeException('Deleting this record would create negative stock.');
         }
 
         $pdo->prepare("UPDATE stock_items SET current_stock = ? WHERE id = ? AND farm_id = ?")
@@ -131,9 +139,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
         $redirectMonth = date('Y-m', strtotime($transaction['transaction_date']));
         header("Location: layer_feeds.php?month={$redirectMonth}");
         exit();
-    } catch (Exception $e) {
-        $pdo->rollBack();
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Feed ledger database error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to update the feed ledger. Please try again.';
+    } catch (RuntimeException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         $_SESSION['error'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unexpected feed ledger error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to update the feed ledger. Please try again.';
     }
 }
 
@@ -152,7 +168,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
         $discoverStmt = $pdo->prepare("SELECT stock_item_id FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry'");
         $discoverStmt->execute([$transactionId, $tenantFarmId]);
         $discoveredItemId = (int)$discoverStmt->fetchColumn();
-        if (!$discoveredItemId) throw new Exception('Transaction not found.');
+        if (!$discoveredItemId) throw new RuntimeException('Transaction not found.');
 
         $itemIds = array_values(array_unique([$discoveredItemId, (int)$newItemId]));
         sort($itemIds, SORT_NUMERIC);
@@ -169,10 +185,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
         $existing = $transStmt->fetch();
 
         if (!$existing) {
-            throw new Exception('Transaction not found.');
+            throw new RuntimeException('Transaction not found.');
         }
         if (stockTransactionHasDailyFeedLinks($pdo, $tenantFarmId, (int)$transactionId)) {
-            throw new Exception('This transaction is managed by a daily feed record and cannot be edited here.');
+            throw new RuntimeException('This transaction is managed by a daily feed record and cannot be edited here.');
         }
 
         $oldItemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
@@ -180,7 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
         $oldItem = $oldItemStmt->fetch();
 
         if (!$oldItem) {
-            throw new Exception('Original feed item not found.');
+            throw new RuntimeException('Original feed item not found.');
         }
 
         $revertedStock = $oldItem['current_stock'];
@@ -189,7 +205,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
             : $existing['quantity'];
 
         if ($revertedStock < 0) {
-            throw new Exception('Cannot edit because reverting the previous transaction would create negative stock.');
+            throw new RuntimeException('Cannot edit because reverting the previous transaction would create negative stock.');
         }
 
         $pdo->prepare("UPDATE stock_items SET current_stock = ? WHERE id = ? AND farm_id = ?")
@@ -200,7 +216,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
         $newItem = $newItemStmt->fetch();
 
         if (!$newItem) {
-            throw new Exception('Selected feed item not found.');
+            throw new RuntimeException('Selected feed item not found.');
         }
 
         $baseStock = $newItemId == $oldItem['id'] ? $revertedStock : $newItem['current_stock'];
@@ -209,7 +225,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
             $calculatedNewStock = $baseStock + $newQuantity;
         } else {
             if ($newQuantity > $baseStock) {
-                throw new Exception("Insufficient stock. Available: {$baseStock} {$newItem['unit']}");
+                throw new RuntimeException("Insufficient stock. Available: {$baseStock} {$newItem['unit']}");
             }
             $calculatedNewStock = $baseStock - $newQuantity;
         }
@@ -245,9 +261,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
         $redirectMonth = date('Y-m', strtotime($newDate));
         header("Location: layer_feeds.php?month={$redirectMonth}");
         exit();
-    } catch (Exception $e) {
-        $pdo->rollBack();
+    } catch (PDOException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Feed ledger database error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to update the feed ledger. Please try again.';
+    } catch (RuntimeException $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
         $_SESSION['error'] = $e->getMessage();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        error_log('Unexpected feed ledger error: ' . $e->getMessage());
+        $_SESSION['error'] = 'Unable to update the feed ledger. Please try again.';
     }
 }
 ?>

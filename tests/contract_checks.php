@@ -156,6 +156,12 @@ foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/rumi
     assertContains('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE', $feedLedger, "{$feedLedgerPage} must lock stock before adding a movement.");
     assertContains('stockTransactionHasDailyFeedLinks(', $feedLedger, "{$feedLedgerPage} must protect daily-record-managed movements.");
     assertTrue(
+        strpos($feedLedger, 'catch (PDOException $e)') < strpos($feedLedger, 'catch (RuntimeException $e)'),
+        "{$feedLedgerPage} must sanitize database failures before showing validation errors."
+    );
+    assertContains("Unable to update the feed ledger. Please try again.", $feedLedger, "{$feedLedgerPage} must show a generic database error.");
+    assertContains("error_log('Feed ledger database error: '", $feedLedger, "{$feedLedgerPage} must log database failures server-side.");
+    assertTrue(
         strpos($feedLedger, 'SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE') < strpos($feedLedger, 'stock_item_id = ? AND farm_type'),
         "{$feedLedgerPage} must lock stock before locking an editable ledger movement."
     );
@@ -271,6 +277,8 @@ foreach ([
     assertContains('name="record_id" id="recordId" value="0"', $dailyRecordPage, "{$relativePath} must submit the clicked record identity.");
     assertContains('data-record-id=', $dailyRecordPage, "{$relativePath} edit controls must carry the clicked record identity.");
     assertContains("recordId: '#recordId'", $dailyRecordPage, "{$relativePath} edit modal must populate the clicked record identity.");
+    assertContains("document.getElementById('recordId').value = 0;", $dailyRecordPage, "{$relativePath} must clear stale record identity when its lookup fields change.");
+    assertContains("document.getElementById('recordId').value = data.id || 0;", $dailyRecordPage, "{$relativePath} must retain the identity returned by a date lookup.");
     assertContains('if ($recordId > 0)', $dailyRecordPage, "{$relativePath} must lock edits by record identity.");
     assertTrue(
         strpos($dailyRecordPage, 'catch (PDOException $e)') < strpos($dailyRecordPage, 'catch (RuntimeException $e)'),

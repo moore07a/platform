@@ -695,6 +695,7 @@ if (cycleSelector) {
                 }
                 const data = payload ? payload.data : null;
                 if (data) {
+                    document.getElementById('recordId').value = data.id || 0;
                     document.getElementById('birdsAge').value = data.birds_age || '';
                     document.getElementById('openingStock').value = data.opening_stock || '';
                     document.getElementById('mortality').value = data.mortality || 0;
@@ -731,6 +732,7 @@ if (cycleSelector) {
     // Check existing record
     function checkExistingRecord() {
         const date = document.getElementById('selectedDate').value;
+        document.getElementById('recordId').value = 0;
         document.getElementById('recordDate').value = date;
         if (selectedCycleId <= 0) {
             resetForm();
