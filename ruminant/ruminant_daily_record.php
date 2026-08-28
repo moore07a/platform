@@ -260,6 +260,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_kg'] === $feedQuantity && $feedItemId === 0)
             ? null
             : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'ruminant', 'kg', $_SESSION['user_id'] ?? null);
+        $linkedFeedItemId = $movementId ? $feedItemId : null;
     if ($existingRecord) {
         // Update existing record
         $stmt = $pdo->prepare("UPDATE ruminant_daily_records SET
@@ -270,7 +271,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         $updateParams = [
             $parseNumeric($_POST['opening_stock']),
             $parseNumeric($_POST['mortality']),
-            $feedQuantity, $feedItemId ?: null, $movementId,
+            $feedQuantity, $linkedFeedItemId, $movementId,
             $parseNumeric($_POST['water_consumption']),
             $_POST['other_details'],
             $_POST['tag_no'],
@@ -299,7 +300,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             $animalType,
             $parseNumeric($_POST['opening_stock']),
             $parseNumeric($_POST['mortality']),
-            $feedQuantity, $feedItemId ?: null, $movementId,
+            $feedQuantity, $linkedFeedItemId, $movementId,
             $parseNumeric($_POST['water_consumption']),
             $_POST['other_details'],
             $_POST['tag_no'],

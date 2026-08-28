@@ -126,16 +126,17 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
         $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_bags'] === $feedQuantity && $feedItemId === 0)
             ? null
             : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'layer', 'bags', $_SESSION['user_id'] ?? null);
+        $linkedFeedItemId = $movementId ? $feedItemId : null;
         if ($existingRecord) {
             $stmt = $pdo->prepare("UPDATE layer_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
                 water_consumption_liters = ?, medications = ?, egg_production = ?, crates_count = ?, laying_rate = ?, birds_age = ?, remarks = ? WHERE id = ? AND farm_id = ?");
-            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedItemId ?: null, $movementId,
+            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
                 $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
                 $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $existingRecord['id'], $tenantFarmId]);
         } else {
             $stmt = $pdo->prepare("INSERT INTO layer_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, egg_production, crates_count, laying_rate, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->execute([$tenantFarmId, ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null, $recordDate,
-                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedItemId ?: null, $movementId,
+                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
                 $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
                 $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $_SESSION['user_id']]);
         }

@@ -77,7 +77,7 @@ function findFarmAdminId(PDO $pdo, int $farmId): int {
 function deleteFarmData(PDO $pdo, int $farmId): void {
     // Delete dependent rows explicitly: old installations use RESTRICT foreign keys, so a farm DELETE alone is not sufficient.
     $pdo->prepare('DELETE ur FROM user_roles ur INNER JOIN users u ON u.id = ur.user_id WHERE u.farm_id = ?')->execute([$farmId]);
-    foreach (['customer_ledger_entries', 'stock_transactions', 'stock_batches', 'layer_daily_records', 'broiler_daily_records', 'ruminant_daily_records', 'farm_expenses', 'profit_loss_summary', 'sales_records', 'production_cycles', 'stock_items', 'inventory_categories', 'farm_modules', 'subscriptions', 'users'] as $table) {
+    foreach (['customer_ledger_entries', 'layer_daily_records', 'broiler_daily_records', 'ruminant_daily_records', 'stock_transactions', 'stock_batches', 'farm_expenses', 'profit_loss_summary', 'sales_records', 'production_cycles', 'stock_items', 'inventory_categories', 'farm_modules', 'subscriptions', 'users'] as $table) {
         $pdo->prepare("DELETE FROM {$table} WHERE farm_id = ?")->execute([$farmId]);
     }
     $pdo->prepare('DELETE FROM farms WHERE id = ?')->execute([$farmId]);

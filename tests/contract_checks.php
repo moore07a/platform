@@ -103,6 +103,10 @@ assertContains('farm_modules', $farmsPage, 'Farm provisioning must save selected
 assertContains('update_farm', $farmsPage, 'Platform owners must be able to edit farm profiles.');
 assertContains('delete_farm', $farmsPage, 'Platform owners must be able to delete farm profiles.');
 assertContains('deleteFarmData', $farmsPage, 'Farm deletion must remove tenant-owned records before the farm account.');
+assertTrue(
+    strpos($farmsPage, "'ruminant_daily_records'") < strpos($farmsPage, "'stock_transactions'"),
+    'Farm deletion must remove linked daily records before their stock transactions.'
+);
 
 $inventory = readFileOrFail($root . '/inventory.php');
 assertContains('requireCurrentFarmId()', $inventory, 'Inventory must identify the active farm.');
@@ -124,6 +128,7 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
     assertContains('$checkSql .= " FOR UPDATE"', $dailyRecord, "{$dailyPage} must lock an existing daily record before reading its feed movement.");
     assertContains('data-feed-item-id=', $dailyRecord, "{$dailyPage} edit controls must retain the linked feed item.");
     assertContains("feedItemId: '#feedItemId'", $dailyRecord, "{$dailyPage} edit modal must prefill the linked feed item.");
+    assertContains('$linkedFeedItemId = $movementId ? $feedItemId : null;', $dailyRecord, "{$dailyPage} must not retain an inventory link for zero consumption.");
     assertTrue(
         strpos($dailyRecord, '$pdo->beginTransaction()') < strpos($dailyRecord, '$checkStmt->execute($checkParams)'),
         "{$dailyPage} must begin its transaction before looking up an existing daily record."
@@ -133,6 +138,7 @@ $inventoryFunctions = readFileOrFail($root . '/includes/functions.php');
 assertContains("transaction_type = 'used'", $inventoryFunctions, 'Daily feed deductions must be recorded as auditable used-stock movements.');
 assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lock stock while validating availability.');
 assertContains('stockTransactionHasDailyFeedLinks', $inventoryFunctions, 'Ledger mutations must be able to identify daily-record-managed movements.');
+assertContains('detachDailyFeedTransaction', $inventoryFunctions, 'Generated movements must be detached from daily records before restrictive deletion.');
 assertContains('would make stock negative on its transaction date', $inventoryFunctions, 'Backdated movements must not create a negative historical balance.');
 foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/ruminant_feeds_record.php'] as $feedLedgerPage) {
     $feedLedger = readFileOrFail($root . '/' . $feedLedgerPage);
