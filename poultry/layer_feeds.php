@@ -67,7 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['add_transaction'])) {
             VALUES (?, 'used', ?, ?, ?, ?, ?, ?, 'poultry', ?)");
         $transStmt->execute([$itemId, $quantity, $previousStock, $newStock, $date,
             $_POST['remarks'], $_SESSION['user_id'], $tenantFarmId]);
-        recalculateStockTransactionBalances($pdo, $tenantFarmId, $itemId);
+        $movementId = (int)$pdo->lastInsertId();
+        recalculateStockTransactionBalances($pdo, $tenantFarmId, $itemId, $date, $movementId);
         $pdo->commit();
         $_SESSION['success'] = 'Feed transaction recorded successfully!';
     } catch (Throwable $e) {
@@ -85,8 +86,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
     try {
         $pdo->beginTransaction();
 
-        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry' FOR UPDATE");
-        $transStmt->execute([$transactionId, $tenantFarmId]);
+        $discoverStmt = $pdo->prepare("SELECT stock_item_id FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry'");
+        $discoverStmt->execute([$transactionId, $tenantFarmId]);
+        $discoveredItemId = (int)$discoverStmt->fetchColumn();
+        if (!$discoveredItemId) throw new Exception('Transaction not found.');
+
+        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
+        $itemStmt->execute([$discoveredItemId, $tenantFarmId]);
+        $item = $itemStmt->fetch();
+
+        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND stock_item_id = ? AND farm_type = 'poultry' FOR UPDATE");
+        $transStmt->execute([$transactionId, $tenantFarmId, $discoveredItemId]);
         $transaction = $transStmt->fetch();
 
         if (!$transaction) {
@@ -95,10 +105,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
         if (stockTransactionHasDailyFeedLinks($pdo, $tenantFarmId, (int)$transactionId)) {
             throw new Exception('This transaction is managed by a daily feed record and cannot be deleted here.');
         }
-
-        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
-        $itemStmt->execute([$transaction['stock_item_id'], $tenantFarmId]);
-        $item = $itemStmt->fetch();
 
         if (!$item) {
             throw new Exception('Related feed item not found.');
@@ -118,6 +124,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_transaction'])
 
         $pdo->prepare("DELETE FROM stock_transactions WHERE id = ? AND farm_id = ?")
             ->execute([$transactionId, $tenantFarmId]);
+        recalculateStockTransactionBalances($pdo, $tenantFarmId, (int)$item['id'], $transaction['transaction_date'], (int)$transactionId);
 
         $pdo->commit();
         $_SESSION['success'] = 'Transaction deleted successfully.';
@@ -142,8 +149,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
     try {
         $pdo->beginTransaction();
 
-        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry' FOR UPDATE");
-        $transStmt->execute([$transactionId, $tenantFarmId]);
+        $discoverStmt = $pdo->prepare("SELECT stock_item_id FROM stock_transactions WHERE id = ? AND farm_id = ? AND farm_type = 'poultry'");
+        $discoverStmt->execute([$transactionId, $tenantFarmId]);
+        $discoveredItemId = (int)$discoverStmt->fetchColumn();
+        if (!$discoveredItemId) throw new Exception('Transaction not found.');
+
+        $itemIds = array_values(array_unique([$discoveredItemId, (int)$newItemId]));
+        sort($itemIds, SORT_NUMERIC);
+        $lockedItems = [];
+        $itemStmt = $pdo->prepare("SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE");
+        foreach ($itemIds as $itemIdToLock) {
+            $itemStmt->execute([$itemIdToLock, $tenantFarmId]);
+            $lockedItem = $itemStmt->fetch();
+            if ($lockedItem) $lockedItems[$itemIdToLock] = $lockedItem;
+        }
+
+        $transStmt = $pdo->prepare("SELECT * FROM stock_transactions WHERE id = ? AND farm_id = ? AND stock_item_id = ? AND farm_type = 'poultry' FOR UPDATE");
+        $transStmt->execute([$transactionId, $tenantFarmId, $discoveredItemId]);
         $existing = $transStmt->fetch();
 
         if (!$existing) {
@@ -209,6 +231,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
             $transactionId,
             $tenantFarmId
         ]);
+
+        recalculateStockTransactionBalances($pdo, $tenantFarmId, (int)$oldItem['id'], $existing['transaction_date'], (int)$transactionId);
+        if ((int)$newItemId !== (int)$oldItem['id']) {
+            recalculateStockTransactionBalances($pdo, $tenantFarmId, (int)$newItemId, $newDate, (int)$transactionId);
+        } else {
+            $startDate = min($existing['transaction_date'], $newDate);
+            recalculateStockTransactionBalances($pdo, $tenantFarmId, (int)$newItemId, $startDate, (int)$transactionId);
+        }
 
         $pdo->commit();
         $_SESSION['success'] = 'Transaction updated successfully.';

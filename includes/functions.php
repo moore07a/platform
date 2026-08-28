@@ -171,20 +171,28 @@ function normalizeStockUnit(string $unit): string {
     return $unit;
 }
 
-function recalculateStockTransactionBalances(PDO $pdo, int $farmId, int $itemId): void {
+function recalculateStockTransactionBalances(PDO $pdo, int $farmId, int $itemId, ?string $fromDate = null, int $fromId = 0): void {
     $itemStmt = $pdo->prepare('SELECT current_stock FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE');
     $itemStmt->execute([$itemId, $farmId]);
     $currentStock = $itemStmt->fetchColumn();
     if ($currentStock === false) return;
 
-    $transactions = $pdo->prepare('SELECT id, transaction_type, quantity FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? ORDER BY transaction_date, id FOR UPDATE');
-    $transactions->execute([$itemId, $farmId]);
-    $rows = $transactions->fetchAll(PDO::FETCH_ASSOC);
-    $netChange = 0.0;
-    foreach ($rows as $row) {
-        $netChange += $row['transaction_type'] === 'received' ? (float)$row['quantity'] : -(float)$row['quantity'];
+    $openingStmt = $pdo->prepare("SELECT COALESCE(SUM(CASE WHEN transaction_type = 'received' THEN quantity ELSE -quantity END), 0) FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?");
+    $openingStmt->execute([$itemId, $farmId]);
+    $balance = (float)$currentStock - (float)$openingStmt->fetchColumn();
+
+    $where = '';
+    $params = [$itemId, $farmId];
+    if ($fromDate !== null) {
+        $prefixStmt = $pdo->prepare("SELECT COALESCE(SUM(CASE WHEN transaction_type = 'received' THEN quantity ELSE -quantity END), 0) FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? AND (transaction_date < ? OR (transaction_date = ? AND id < ?))");
+        $prefixStmt->execute([$itemId, $farmId, $fromDate, $fromDate, $fromId]);
+        $balance += (float)$prefixStmt->fetchColumn();
+        $where = ' AND (transaction_date > ? OR (transaction_date = ? AND id >= ?))';
+        array_push($params, $fromDate, $fromDate, $fromId);
     }
-    $balance = (float)$currentStock - $netChange;
+    $transactions = $pdo->prepare('SELECT id, transaction_type, quantity, previous_stock, new_stock FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?' . $where . ' ORDER BY transaction_date, id FOR UPDATE');
+    $transactions->execute($params);
+    $rows = $transactions->fetchAll(PDO::FETCH_ASSOC);
     $update = $pdo->prepare('UPDATE stock_transactions SET previous_stock = ?, new_stock = ? WHERE id = ? AND farm_id = ?');
     foreach ($rows as $row) {
         $previous = $balance;
@@ -192,7 +200,9 @@ function recalculateStockTransactionBalances(PDO $pdo, int $farmId, int $itemId)
         if ($balance < -0.000001) {
             throw new RuntimeException('This backdated transaction would make stock negative on its transaction date.');
         }
-        $update->execute([$previous, $balance, $row['id'], $farmId]);
+        if (abs((float)$row['previous_stock'] - $previous) > 0.000001 || abs((float)$row['new_stock'] - $balance) > 0.000001) {
+            $update->execute([$previous, $balance, $row['id'], $farmId]);
+        }
     }
 }
 
@@ -276,11 +286,16 @@ function syncDailyFeedConsumption(PDO $pdo, int $farmId, ?int $oldTransactionId,
         // key. Detach it inside the caller's transaction before replacing/deleting it.
         detachDailyFeedTransaction($pdo, $farmId, $oldTransactionId);
         $pdo->prepare('DELETE FROM stock_transactions WHERE id = ? AND farm_id = ?')->execute([$oldTransactionId, $farmId]);
-        $affectedItems[(int)$oldTransaction['stock_item_id']] = true;
+        $affectedItems[(int)$oldTransaction['stock_item_id']] = [
+            'date' => $oldTransaction['transaction_date'],
+            'id' => (int)$oldTransaction['id'],
+        ];
     }
 
     if ($quantity <= 0) {
-        foreach (array_keys($affectedItems) as $affectedItemId) recalculateStockTransactionBalances($pdo, $farmId, $affectedItemId);
+        foreach ($affectedItems as $affectedItemId => $start) {
+            recalculateStockTransactionBalances($pdo, $farmId, $affectedItemId, $start['date'], $start['id']);
+        }
         return null;
     }
     if ($feedItemId <= 0) {
@@ -307,8 +322,14 @@ function syncDailyFeedConsumption(PDO $pdo, int $farmId, ?int $oldTransactionId,
     $movement = $pdo->prepare("INSERT INTO stock_transactions (farm_id, stock_item_id, transaction_type, quantity, previous_stock, new_stock, transaction_date, remarks, user_id, farm_type) VALUES (?, ?, 'used', ?, ?, ?, ?, 'Automatically deducted from daily feed consumption', ?, ?)");
     $movement->execute([$farmId, $feedItemId, $quantity, $item['current_stock'], $newStock, $date, $userId, $item['farm_type']]);
     $movementId = (int)$pdo->lastInsertId();
-    $affectedItems[$feedItemId] = true;
-    foreach (array_keys($affectedItems) as $affectedItemId) recalculateStockTransactionBalances($pdo, $farmId, $affectedItemId);
+    $newStart = ['date' => $date, 'id' => $movementId];
+    $existingStart = $affectedItems[$feedItemId] ?? null;
+    if (!$existingStart || $date < $existingStart['date'] || ($date === $existingStart['date'] && $movementId < $existingStart['id'])) {
+        $affectedItems[$feedItemId] = $newStart;
+    }
+    foreach ($affectedItems as $affectedItemId => $start) {
+        recalculateStockTransactionBalances($pdo, $farmId, $affectedItemId, $start['date'], $start['id']);
+    }
     return $movementId;
 }
 }

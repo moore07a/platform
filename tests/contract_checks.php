@@ -143,6 +143,8 @@ assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lo
 assertContains('stockTransactionHasDailyFeedLinks', $inventoryFunctions, 'Ledger mutations must be able to identify daily-record-managed movements.');
 assertContains('detachDailyFeedTransaction', $inventoryFunctions, 'Generated movements must be detached from daily records before restrictive deletion.');
 assertContains('would make stock negative on its transaction date', $inventoryFunctions, 'Backdated movements must not create a negative historical balance.');
+assertContains('?string $fromDate = null, int $fromId = 0', $inventoryFunctions, 'Ledger replay must support recalculating only the affected chronological suffix.');
+assertContains("id >= ?", $inventoryFunctions, 'Ledger replay must lock only transactions at or after the earliest changed movement.');
 assertTrue(
     strpos($inventoryFunctions, "SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE") < strpos($inventoryFunctions, "transaction_type = 'used' FOR UPDATE"),
     'Daily feed synchronization must lock stock items before generated movements.'
@@ -153,7 +155,17 @@ foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/rumi
     $feedLedger = readFileOrFail($root . '/' . $feedLedgerPage);
     assertContains('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE', $feedLedger, "{$feedLedgerPage} must lock stock before adding a movement.");
     assertContains('stockTransactionHasDailyFeedLinks(', $feedLedger, "{$feedLedgerPage} must protect daily-record-managed movements.");
+    assertTrue(
+        strpos($feedLedger, 'SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE') < strpos($feedLedger, 'stock_item_id = ? AND farm_type'),
+        "{$feedLedgerPage} must lock stock before locking an editable ledger movement."
+    );
 }
+assertContains("WHERE id = ? AND farm_id = ?", readFileOrFail($root . '/ruminant/ruminant_daily_record.php'), 'Ruminant edits must update only the daily record that was locked.');
+$deleteCategory = readFileOrFail($root . '/inventory/delete_category.php');
+assertTrue(
+    strpos($deleteCategory, 'catch (PDOException $e)') < strpos($deleteCategory, 'catch (Throwable $e)'),
+    'Category deletion must sanitize PDO failures before handling safe validation errors.'
+);
 assertContains('foreach (allowedFeedCategories() as $category)', $inventory, 'The feed type dropdown must show only subscribed feed classifications.');
 assertContains('in_array($feedCategory, allowedFeedCategories(), true)', $inventory, 'Inventory must reject feed classifications outside the farm subscription.');
 

@@ -58,13 +58,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $itemNames = array_column($items, 'item_name');
                 $message .= ' Removed related items: ' . implode(', ', $itemNames);
             }
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('Inventory category deletion failed: ' . $e->getMessage());
+            $message = 'Could not delete category. It may be in use.';
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }
-            $message = $e instanceof RuntimeException
-                ? $e->getMessage()
-                : 'Could not delete category. It may be in use.';
+            $message = $e->getMessage();
         }
     }
 }

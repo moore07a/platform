@@ -359,7 +359,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 $item['farm_type'], $currentFarmId
             ]);
             
-            recalculateStockTransactionBalances($pdo, $currentFarmId, (int)$itemId);
+            $movementId = (int)$pdo->lastInsertId();
+            recalculateStockTransactionBalances($pdo, $currentFarmId, (int)$itemId, date('Y-m-d'), $movementId);
             $pdo->commit();
             $_SESSION['success'] = "Stock updated successfully!";
         } else {

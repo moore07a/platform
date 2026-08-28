@@ -275,7 +275,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             opening_stock = ?, mortality = ?, feed_consumption_kg = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
             water_consumption_liters = ?, other_details = ?, tag_no = ?,
             medications = ?, reproduction_details = ?, remarks = ?
-            WHERE farm_id = ? AND record_date = ? AND LOWER(animal_type) = ?" . (($cycleEnabled && $selectedCycleId > 0) ? " AND cycle_id = ?" : ""));
+            WHERE id = ? AND farm_id = ?");
         $updateParams = [
             $parseNumeric($_POST['opening_stock']),
             $parseNumeric($_POST['mortality']),
@@ -286,13 +286,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             $_POST['medications'],
             $_POST['reproduction_details'],
             $_POST['remarks'],
-            $tenantFarmId,
-            $recordDate,
-            $animalType
+            $existingRecord['id'],
+            $tenantFarmId
         ];
-        if ($cycleEnabled && $selectedCycleId > 0) {
-            $updateParams[] = $selectedCycleId;
-        }
         $stmt->execute($updateParams);
     } else {
         // Insert new record
