@@ -151,6 +151,12 @@ assertTrue(
 );
 assertContains("error_log('Inventory database operation failed: '", $inventory, 'Inventory database failures must be logged server-side.');
 assertContains("\$e instanceof PDOException", $inventory, 'Inventory database failures must be replaced with a safe user-facing message.');
+assertContains('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE', $inventory, 'Category deletion must lock stock items in deterministic order before deleting ledger rows.');
+assertTrue(
+    strpos($inventory, "SELECT id FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE") < strpos($inventory, 'if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemId))'),
+    'Permanent item deletion must lock the item before checking daily-record links.'
+);
+assertContains("SELECT transaction_type, quantity FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? FOR UPDATE", $inventoryFunctions, 'Ledger replay must derive its opening balance from a current locking read.');
 foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/ruminant_feeds_record.php'] as $feedLedgerPage) {
     $feedLedger = readFileOrFail($root . '/' . $feedLedgerPage);
     assertContains('SELECT * FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE', $feedLedger, "{$feedLedgerPage} must lock stock before adding a movement.");
@@ -168,6 +174,7 @@ foreach (['poultry/layer_feeds.php', 'poultry/broiler_feeds.php', 'ruminant/rumi
 }
 assertContains("WHERE id = ? AND farm_id = ?", readFileOrFail($root . '/ruminant/ruminant_daily_record.php'), 'Ruminant edits must update only the daily record that was locked.');
 $deleteCategory = readFileOrFail($root . '/inventory/delete_category.php');
+assertContains('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE', $deleteCategory, 'Standalone category deletion must lock items before their transactions.');
 assertTrue(
     strpos($deleteCategory, 'catch (PDOException $e)') < strpos($deleteCategory, 'catch (Throwable $e)'),
     'Category deletion must sanitize PDO failures before handling safe validation errors.'
@@ -212,6 +219,12 @@ foreach (['inventory/add_category.php', 'inventory/delete_category.php'] as $rel
     assertContains('verify_csrf_token', readFileOrFail($root . '/' . $relativePath), "{$relativePath} must enforce CSRF.");
 }
 assertContains('inventoryItemHasDailyFeedLinks(', readFileOrFail($root . '/inventory/delete_category.php'), 'The standalone category deletion route must preserve daily feed links.');
+$ruminantDaily = readFileOrFail($root . '/ruminant/ruminant_daily_record.php');
+assertTrue(
+    strpos($ruminantDaily, 'catch (PDOException $e)') < strpos($ruminantDaily, 'catch (Throwable $e)'),
+    'Ruminant deletion must sanitize database failures before showing validation errors.'
+);
+assertContains('The daily record could not be deleted. Please try again.', $ruminantDaily, 'Ruminant deletion must show a generic database error.');
 
 $baseSchema = readFileOrFail($root . '/database_schema.sql');
 foreach (['layer', 'broiler', 'ruminant'] as $recordType) {

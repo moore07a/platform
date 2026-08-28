@@ -26,7 +26,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pdo->beginTransaction();
 
             // Find stock items that belong to this category
-            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ?');
+            // Follow the item-before-ledger lock order used by stock mutations.
+            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE');
             $itemStmt->execute([$categoryId, $farmId]);
             $items = $itemStmt->fetchAll();
 

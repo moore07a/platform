@@ -175,7 +175,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         try {
             $pdo->beginTransaction();
 
-            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ?');
+            // Lock items before inspecting or deleting their ledger rows. This is
+            // the same item-first order used by daily-feed synchronization.
+            $itemStmt = $pdo->prepare('SELECT id, item_name FROM stock_items WHERE category_id = ? AND farm_id = ? ORDER BY id FOR UPDATE');
             $itemStmt->execute([$categoryId, $currentFarmId]);
             $items = $itemStmt->fetchAll();
             foreach ($items as $itemRow) {
@@ -435,6 +437,11 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
         try {
             $pdo->beginTransaction();
+            $lockItem = $pdo->prepare('SELECT id FROM stock_items WHERE id = ? AND farm_id = ? FOR UPDATE');
+            $lockItem->execute([(int)$itemId, $currentFarmId]);
+            if (!$lockItem->fetchColumn()) {
+                throw new RuntimeException('Inventory item not found.');
+            }
             if (inventoryItemHasDailyFeedLinks($pdo, $currentFarmId, (int)$itemId)) {
                 throw new RuntimeException('This item is linked to daily feed records and cannot be permanently deleted.');
             }

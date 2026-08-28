@@ -177,16 +177,25 @@ function recalculateStockTransactionBalances(PDO $pdo, int $farmId, int $itemId,
     $currentStock = $itemStmt->fetchColumn();
     if ($currentStock === false) return;
 
-    $openingStmt = $pdo->prepare("SELECT COALESCE(SUM(CASE WHEN transaction_type = 'received' THEN quantity ELSE -quantity END), 0) FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ?");
+    // Use locking reads after the item lock. A plain aggregate here can establish
+    // an older repeatable-read snapshot while current_stock already reflects a
+    // concurrent commit, causing that movement to be counted twice during replay.
+    $openingStmt = $pdo->prepare('SELECT transaction_type, quantity FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? FOR UPDATE');
     $openingStmt->execute([$itemId, $farmId]);
-    $balance = (float)$currentStock - (float)$openingStmt->fetchColumn();
+    $ledgerTotal = 0.0;
+    foreach ($openingStmt->fetchAll(PDO::FETCH_ASSOC) as $movement) {
+        $ledgerTotal += $movement['transaction_type'] === 'received' ? (float)$movement['quantity'] : -(float)$movement['quantity'];
+    }
+    $balance = (float)$currentStock - $ledgerTotal;
 
     $where = '';
     $params = [$itemId, $farmId];
     if ($fromDate !== null) {
-        $prefixStmt = $pdo->prepare("SELECT COALESCE(SUM(CASE WHEN transaction_type = 'received' THEN quantity ELSE -quantity END), 0) FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? AND (transaction_date < ? OR (transaction_date = ? AND id < ?))");
+        $prefixStmt = $pdo->prepare("SELECT transaction_type, quantity FROM stock_transactions WHERE stock_item_id = ? AND farm_id = ? AND (transaction_date < ? OR (transaction_date = ? AND id < ?)) FOR UPDATE");
         $prefixStmt->execute([$itemId, $farmId, $fromDate, $fromDate, $fromId]);
-        $balance += (float)$prefixStmt->fetchColumn();
+        foreach ($prefixStmt->fetchAll(PDO::FETCH_ASSOC) as $movement) {
+            $balance += $movement['transaction_type'] === 'received' ? (float)$movement['quantity'] : -(float)$movement['quantity'];
+        }
         $where = ' AND (transaction_date > ? OR (transaction_date = ? AND id >= ?))';
         array_push($params, $fromDate, $fromDate, $fromId);
     }

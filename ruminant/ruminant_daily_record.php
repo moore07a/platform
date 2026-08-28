@@ -64,6 +64,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_record']) && $
             } else {
                 $pdo->rollBack();
             }
+        } catch (PDOException $e) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('Ruminant daily record deletion failed: ' . $e->getMessage());
+            $_SESSION['error'] = 'The daily record could not be deleted. Please try again.';
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
             $_SESSION['error'] = $e->getMessage();
