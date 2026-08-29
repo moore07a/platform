@@ -282,7 +282,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                     <div class="card-body text-center">
                                         <h6>Feed Consumption</h6>
                                         <h3><?php echo htmlspecialchars($monthlyFeedDisplay); ?></h3>
-                                        <small>Bags (25kg each)</small>
+                                        <small>By inventory unit</small>
                                     </div>
                                 </div>
                             </div>
