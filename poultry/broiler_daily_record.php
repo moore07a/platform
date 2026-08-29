@@ -1,6 +1,8 @@
 <?php require_once(dirname(__DIR__) . '/init.php'); ?>
 <?php
 require_once(__DIR__ . '/../config.php');
+require_once(__DIR__ . '/../includes/functions.php');
+runSchemaMigrations($pdo, ['daily_feed_units']);
 requireLogin();
 
 // Check access
@@ -40,6 +42,7 @@ $query .= " ORDER BY record_date";
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $records = $stmt->fetchAll();
+$monthlyFeedDisplay = formatFeedConsumptionTotals($records, 'feed_consumption_bags', 'bags');
 
 // Get latest closing stock from broiler mortality table
 $broilerClosingStock = null;
@@ -84,22 +87,26 @@ $monthlyTotals = [
 
 foreach ($records as $record) {
     $monthlyTotals['mortality'] += $record['mortality'];
-    $monthlyTotals['feed_consumption'] += $record['feed_consumption_bags'];
     $monthlyTotals['water_consumption'] += $record['water_consumption_liters'];
 }
 
 $summaryTotals = $monthlyTotals;
+$summaryFeedRecords = $records;
 if ($cycleEnabled && $selectedCycleId === 0) {
+    $summaryFeedStmt = $pdo->prepare('SELECT feed_consumption_bags, feed_consumption_unit FROM broiler_daily_records WHERE farm_id = ?');
+    $summaryFeedStmt->execute([$tenantFarmId]);
+    $summaryFeedRecords = $summaryFeedStmt->fetchAll(PDO::FETCH_ASSOC);
     $summaryStmt = $pdo->query("
         SELECT
             COALESCE(SUM(mortality), 0) AS mortality,
-            COALESCE(SUM(feed_consumption_bags), 0) AS feed_consumption,
             COALESCE(SUM(water_consumption_liters), 0) AS water_consumption
         FROM broiler_daily_records
         WHERE farm_id = $tenantFarmId
     ");
     $summaryTotals = array_merge($summaryTotals, $summaryStmt->fetch(PDO::FETCH_ASSOC) ?: []);
 }
+
+$summaryFeedDisplay = formatFeedConsumptionTotals($summaryFeedRecords, 'feed_consumption_bags', 'bags');
 
 // Handle form submission
 if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
@@ -124,7 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             throw new RuntimeException('Daily records cannot be dated in the future.');
         }
         $pdo->beginTransaction();
-        $checkSql = "SELECT id, feed_item_id, feed_consumption_bags, feed_stock_transaction_id FROM broiler_daily_records WHERE farm_id = ?";
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_bags, feed_consumption_unit, feed_stock_transaction_id FROM broiler_daily_records WHERE farm_id = ?";
         $checkParams = [$tenantFarmId];
         if ($recordId > 0) {
             $checkSql .= " AND id = ?";
@@ -146,15 +153,23 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             ? null
             : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'broiler', '', $_SESSION['user_id'] ?? null);
         $linkedFeedItemId = $movementId ? $feedItemId : null;
+        $feedUnit = 'bags';
+        if ($movementId) {
+            $feedUnitStmt = $pdo->prepare('SELECT unit FROM stock_items WHERE id = ? AND farm_id = ?');
+            $feedUnitStmt->execute([$feedItemId, $tenantFarmId]);
+            $feedUnit = trim((string)$feedUnitStmt->fetchColumn()) ?: 'bags';
+        } elseif ($existingRecord && !empty($existingRecord['feed_consumption_unit'])) {
+            $feedUnit = $existingRecord['feed_consumption_unit'];
+        }
         if ($existingRecord) {
-            $stmt = $pdo->prepare("UPDATE broiler_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
+            $stmt = $pdo->prepare("UPDATE broiler_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_consumption_unit = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
             water_consumption_liters = ?, medications = ?, birds_age = ?, remarks = ? WHERE id = ? AND farm_id = ?");
-            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
+            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedUnit, $linkedFeedItemId, $movementId,
                 $_POST['water_consumption'], $_POST['medications'], $_POST['birds_age'], $_POST['remarks'], $existingRecord['id'], $tenantFarmId]);
         } else {
-            $stmt = $pdo->prepare("INSERT INTO broiler_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt = $pdo->prepare("INSERT INTO broiler_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_consumption_unit, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->execute([$tenantFarmId, ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null, $recordDate,
-                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
+                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedUnit, $linkedFeedItemId, $movementId,
                 $_POST['water_consumption'], $_POST['medications'], $_POST['birds_age'], $_POST['remarks'], $_SESSION['user_id']]);
         }
         $pdo->commit();
@@ -256,8 +271,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                 <div class="card text-white bg-success">
                                     <div class="card-body text-center">
                                         <h6>Feed Consumed</h6>
-                                        <h3><?php echo number_format($summaryTotals['feed_consumption'], 2); ?></h3>
-                                        <small>Bags (25kg)</small>
+                                        <h3><?php echo htmlspecialchars($summaryFeedDisplay); ?></h3>
+                                        <small>By inventory unit</small>
                                     </div>
                                 </div>
                             </div>
@@ -356,7 +371,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 $hasRecord = true;
                                                 $dayOpeningStock += (float)$rec['opening_stock'];
                                                 $dayMortality += (float)$rec['mortality'];
-                                                $dayFeedConsumption += (float)$rec['feed_consumption_bags'];
                                                 if ($rec['mortality'] > 0) {
                                                     $hasMortality = true;
                                                 }
@@ -405,7 +419,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 <div class="d-flex flex-wrap gap-1 justify-content-center mt-1">
                                                     <span class="badge text-bg-primary">O/S: <?php echo number_format($dayOpeningStock, 0); ?></span>
                                                     <span class="badge text-bg-danger">Mort: <?php echo number_format($dayMortality, 0); ?></span>
-                                                    <span class="badge text-bg-success">Feed: <?php echo number_format($dayFeedConsumption, 1); ?></span>
+                                                    <span class="badge text-bg-success">Feed: <?php echo htmlspecialchars(formatFeedConsumptionTotals($dayRecords, 'feed_consumption_bags', 'bags')); ?></span>
                                                 </div>
                                                 <?php endif; ?>
                                                 <?php else: ?>
@@ -433,7 +447,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 <th>Date</th>
                                                 <th>Opening Stock</th>
                                                 <th>Mortality</th>
-                                                <th>Feed (bags)</th>
+                                                <th>Feed (unit)</th>
                                                 <th>Water (L)</th>
                                                 <th>Medications</th>
                                                 <th>Birds Age</th>
@@ -466,7 +480,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                             Closing: <?php echo $closingStock; ?>
                                                         </small>
                                                     </td>
-                                                    <td><?php echo $record['feed_consumption_bags']; ?></td>
+                                                    <td><?php echo htmlspecialchars(number_format((float)$record['feed_consumption_bags'], 2) . ' ' . ($record['feed_consumption_unit'] ?: 'bags')); ?></td>
                                                     <td><?php echo number_format($record['water_consumption_liters']); ?></td>
                                                     <td>
                                                         <?php if ($record['medications']): ?>
@@ -513,7 +527,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 <td><strong>TOTAL</strong></td>
                                                 <td>--</td>
                                                 <td class="text-danger fw-bold"><?php echo $monthlyTotals['mortality']; ?></td>
-                                                <td class="fw-bold"><?php echo number_format($monthlyTotals['feed_consumption'], 2); ?></td>
+                                                <td class="fw-bold"><?php echo htmlspecialchars($monthlyFeedDisplay); ?></td>
                                                 <td class="fw-bold"><?php echo number_format($monthlyTotals['water_consumption']); ?></td>
                                                 <td colspan="<?php echo $canEdit ? '4' : '3'; ?>">Monthly Summary</td>
                                             </tr>

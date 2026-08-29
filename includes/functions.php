@@ -59,6 +59,17 @@ function ensurePoultryCategoryColumn($pdo) {
 }
 }
 
+if (!function_exists('ensureDailyFeedUnitColumns')) {
+function ensureDailyFeedUnitColumns($pdo) {
+    foreach (['layer_daily_records' => 'bags', 'broiler_daily_records' => 'bags', 'ruminant_daily_records' => 'kg'] as $table => $defaultUnit) {
+        $checkStmt = $pdo->query("SHOW COLUMNS FROM {$table} LIKE 'feed_consumption_unit'");
+        if ($checkStmt->rowCount() === 0) {
+            $pdo->exec("ALTER TABLE {$table} ADD COLUMN feed_consumption_unit VARCHAR(50) NOT NULL DEFAULT '{$defaultUnit}' AFTER " . ($table === 'ruminant_daily_records' ? 'feed_consumption_kg' : 'feed_consumption_bags'));
+        }
+    }
+}
+}
+
 if (!function_exists('ensurePermissionsTable')) {
 function ensurePermissionsTable($pdo) {
     // Ensure permissions table exists before attempting permission reads/writes
@@ -95,6 +106,7 @@ function runSchemaMigrations($pdo, array $targets = []) {
         'expense_unit' => 'ensureExpenseUnitColumn',
         'user_last_login' => 'ensureUserLastLoginColumn',
         'poultry_category' => 'ensurePoultryCategoryColumn',
+        'daily_feed_units' => 'ensureDailyFeedUnitColumns',
         'permissions_table' => 'ensurePermissionsTable'
     ];
 
@@ -169,6 +181,20 @@ function normalizeStockUnit(string $unit): string {
     if (in_array($unit, ['bag', 'bags'], true)) return 'bags';
     if (in_array($unit, ['kg', 'kgs', 'kilogram', 'kilograms'], true)) return 'kg';
     return $unit;
+}
+
+function formatFeedConsumptionTotals(array $records, string $quantityColumn, string $defaultUnit): string {
+    $totals = [];
+    foreach ($records as $record) {
+        $quantity = (float)($record[$quantityColumn] ?? 0);
+        if (abs($quantity) < 0.000001) continue;
+        $unit = trim((string)($record['feed_consumption_unit'] ?? '')) ?: $defaultUnit;
+        $unit = normalizeStockUnit($unit);
+        $totals[$unit] = ($totals[$unit] ?? 0) + $quantity;
+    }
+    if (!$totals) return '0 ' . $defaultUnit;
+    ksort($totals);
+    return implode(' + ', array_map(static fn($unit) => number_format($totals[$unit], 2) . ' ' . $unit, array_keys($totals)));
 }
 
 function recalculateStockTransactionBalances(PDO $pdo, int $farmId, int $itemId, ?string $fromDate = null, int $fromId = 0): void {

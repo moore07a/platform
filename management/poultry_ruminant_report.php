@@ -1,6 +1,8 @@
 <?php require_once(dirname(__DIR__) . '/init.php'); ?>
 <?php
 require_once(__DIR__ . '/../config.php');
+require_once(__DIR__ . '/../includes/functions.php');
+runSchemaMigrations($pdo, ['daily_feed_units']);
 requireLogin();
 requireBusinessReportAccess();
 $tenantFarmId = requireCurrentFarmId();
@@ -85,11 +87,13 @@ $layerStartStmt = $pdo->prepare("SELECT opening_stock FROM layer_daily_records
 $layerStartStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $layerOpeningStock = (int)($layerStartStmt->fetchColumn() ?: 0);
 
-$layerStatStmt = $pdo->prepare("SELECT COUNT(*) AS days_count, SUM(mortality) AS mortality,
-                                SUM(feed_consumption_bags) AS feed, SUM(egg_production) AS eggs
+$layerStatStmt = $pdo->prepare("SELECT COUNT(*) AS days_count, SUM(mortality) AS mortality, SUM(egg_production) AS eggs
                                 FROM layer_daily_records WHERE farm_id = ? AND record_date BETWEEN ? AND ?");
 $layerStatStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $layer = $layerStatStmt->fetch();
+$layerFeedStmt = $pdo->prepare("SELECT feed_consumption_bags, feed_consumption_unit FROM layer_daily_records WHERE farm_id = ? AND record_date BETWEEN ? AND ?");
+$layerFeedStmt->execute([$tenantFarmId, $startDate, $endDate]);
+$layerFeedDisplay = formatFeedConsumptionTotals($layerFeedStmt->fetchAll(PDO::FETCH_ASSOC), 'feed_consumption_bags', 'bags');
 $layerMortality = (int)($layer['mortality'] ?? 0);
 $layerClosingStock = max(0, $layerOpeningStock - $layerMortality);
 
@@ -100,11 +104,13 @@ $broilerStartStmt = $pdo->prepare("SELECT opening_stock FROM broiler_daily_recor
 $broilerStartStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $broilerOpeningStock = (int)($broilerStartStmt->fetchColumn() ?: 0);
 
-$broilerStatStmt = $pdo->prepare("SELECT COUNT(*) AS days_count, SUM(mortality) AS mortality,
-                                  SUM(feed_consumption_bags) AS feed
+$broilerStatStmt = $pdo->prepare("SELECT COUNT(*) AS days_count, SUM(mortality) AS mortality
                                   FROM broiler_daily_records WHERE farm_id = ? AND record_date BETWEEN ? AND ?");
 $broilerStatStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $broiler = $broilerStatStmt->fetch();
+$broilerFeedStmt = $pdo->prepare("SELECT feed_consumption_bags, feed_consumption_unit FROM broiler_daily_records WHERE farm_id = ? AND record_date BETWEEN ? AND ?");
+$broilerFeedStmt->execute([$tenantFarmId, $startDate, $endDate]);
+$broilerFeedDisplay = formatFeedConsumptionTotals($broilerFeedStmt->fetchAll(PDO::FETCH_ASSOC), 'feed_consumption_bags', 'bags');
 $broilerMortality = (int)($broiler['mortality'] ?? 0);
 $broilerClosingStock = max(0, $broilerOpeningStock - $broilerMortality);
 
@@ -119,11 +125,13 @@ if ($ruminantFirstDate) {
     $ruminantOpeningStock = (int)($ruminantOpeningStmt->fetchColumn() ?: 0);
 }
 
-$ruminantStatStmt = $pdo->prepare("SELECT COUNT(*) AS entries_count, SUM(mortality) AS mortality,
-                                   SUM(feed_consumption_kg) AS feed
+$ruminantStatStmt = $pdo->prepare("SELECT COUNT(*) AS entries_count, SUM(mortality) AS mortality
                                    FROM ruminant_daily_records WHERE farm_id = ? AND record_date BETWEEN ? AND ?");
 $ruminantStatStmt->execute([$tenantFarmId, $startDate, $endDate]);
 $ruminant = $ruminantStatStmt->fetch();
+$ruminantFeedStmt = $pdo->prepare("SELECT feed_consumption_kg, feed_consumption_unit FROM ruminant_daily_records WHERE farm_id = ? AND record_date BETWEEN ? AND ?");
+$ruminantFeedStmt->execute([$tenantFarmId, $startDate, $endDate]);
+$ruminantFeedDisplay = formatFeedConsumptionTotals($ruminantFeedStmt->fetchAll(PDO::FETCH_ASSOC), 'feed_consumption_kg', 'kg');
 $ruminantMortality = (int)($ruminant['mortality'] ?? 0);
 $ruminantClosingStock = max(0, $ruminantOpeningStock - $ruminantMortality);
 
@@ -195,13 +203,13 @@ foreach ($stockRows as $row) {
                     <thead class="table-dark"><tr><th>Section</th><th>Opening Stock</th><th>Mortality</th><th>Closing Stock</th><th>Feeds Consumed</th><th>Eggs Laid</th><th>Stock Items</th><th>Stock Value</th></tr></thead>
                     <tbody>
                         <?php if (in_array('poultry', $visibleFarmTypes, true)): ?><tr>
-                            <td>Layers</td><td><?php echo $layerOpeningStock; ?></td><td><?php echo $layerMortality; ?></td><td><?php echo $layerClosingStock; ?></td><td><?php echo number_format((float)($layer['feed'] ?? 0), 2); ?> bags</td><td><?php echo (int)($layer['eggs'] ?? 0); ?></td><td><?php echo $stockSummary['poultry']['items']; ?></td><td>₦<?php echo number_format($stockSummary['poultry']['stock_value'], 2); ?></td>
+                            <td>Layers</td><td><?php echo $layerOpeningStock; ?></td><td><?php echo $layerMortality; ?></td><td><?php echo $layerClosingStock; ?></td><td><?php echo htmlspecialchars($layerFeedDisplay); ?></td><td><?php echo (int)($layer['eggs'] ?? 0); ?></td><td><?php echo $stockSummary['poultry']['items']; ?></td><td>₦<?php echo number_format($stockSummary['poultry']['stock_value'], 2); ?></td>
                         </tr>
                         <tr>
-                            <td>Broilers</td><td><?php echo $broilerOpeningStock; ?></td><td><?php echo $broilerMortality; ?></td><td><?php echo $broilerClosingStock; ?></td><td><?php echo number_format((float)($broiler['feed'] ?? 0), 2); ?> bags</td><td>N/A</td><td><?php echo $stockSummary['poultry']['items']; ?></td><td>₦<?php echo number_format($stockSummary['poultry']['stock_value'], 2); ?></td>
+                            <td>Broilers</td><td><?php echo $broilerOpeningStock; ?></td><td><?php echo $broilerMortality; ?></td><td><?php echo $broilerClosingStock; ?></td><td><?php echo htmlspecialchars($broilerFeedDisplay); ?></td><td>N/A</td><td><?php echo $stockSummary['poultry']['items']; ?></td><td>₦<?php echo number_format($stockSummary['poultry']['stock_value'], 2); ?></td>
                         </tr><?php endif; ?>
                         <?php if (in_array('ruminant', $visibleFarmTypes, true)): ?><tr>
-                            <td>Ruminants</td><td><?php echo $ruminantOpeningStock; ?></td><td><?php echo $ruminantMortality; ?></td><td><?php echo $ruminantClosingStock; ?></td><td><?php echo number_format((float)($ruminant['feed'] ?? 0), 2); ?> kg</td><td>N/A</td><td><?php echo $stockSummary['ruminant']['items']; ?></td><td>₦<?php echo number_format($stockSummary['ruminant']['stock_value'], 2); ?></td>
+                            <td>Ruminants</td><td><?php echo $ruminantOpeningStock; ?></td><td><?php echo $ruminantMortality; ?></td><td><?php echo $ruminantClosingStock; ?></td><td><?php echo htmlspecialchars($ruminantFeedDisplay); ?></td><td>N/A</td><td><?php echo $stockSummary['ruminant']['items']; ?></td><td>₦<?php echo number_format($stockSummary['ruminant']['stock_value'], 2); ?></td>
                         </tr><?php endif; ?>
                     </tbody>
                 </table>
