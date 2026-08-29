@@ -618,7 +618,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_transaction']) &
                 $('#editTransactionType').val(button.data('type'));
                 $('#editQuantity').val(button.data('quantity'));
                 $('#editRemarks').val(button.data('remarks'));
-                $('#editTransactionModal').modal('show');
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('editTransactionModal')).show();
             });
         });
     </script>

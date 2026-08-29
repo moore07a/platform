@@ -319,7 +319,10 @@ function syncDailyFeedConsumption(PDO $pdo, int $farmId, ?int $oldTransactionId,
     if (!(int)$item['is_active'] && !$reusingInactiveItem) {
         throw new RuntimeException('The selected feed item is inactive.');
     }
-    if (normalizeStockUnit((string)$item['unit']) !== normalizeStockUnit($expectedUnit)) {
+    // Some farms stock feed in kg while others use bags or another locally
+    // configured unit. An empty expected unit means the daily record should use
+    // the inventory item's own unit rather than hiding otherwise valid feed.
+    if ($expectedUnit !== '' && normalizeStockUnit((string)$item['unit']) !== normalizeStockUnit($expectedUnit)) {
         throw new RuntimeException(sprintf('The selected feed item must be stocked in %s.', $expectedUnit));
     }
     if ($quantity > (float)$item['current_stock']) {
