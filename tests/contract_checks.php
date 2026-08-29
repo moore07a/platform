@@ -125,6 +125,9 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
     assertContains('name="feed_item_id"', $dailyRecord, "{$dailyPage} must let the user select a feed inventory item.");
     assertContains("feed_category = '{$feedCategory}'", $dailyRecord, "{$dailyPage} must show only matching feed inventory items.");
     assertContains('syncDailyFeedConsumption(', $dailyRecord, "{$dailyPage} must synchronize daily consumption with current feed stock.");
+    assertContains('feed_consumption_unit', $dailyRecord, "{$dailyPage} must retain the inventory unit used by each feed record.");
+    assertContains('formatFeedConsumptionTotals(', $dailyRecord, "{$dailyPage} must total feed consumption separately by unit.");
+    assertContains('By inventory unit', $dailyRecord, "{$dailyPage} must label mixed-unit feed summaries without implying a fixed unit.");
     assertContains('$checkSql .= " FOR UPDATE"', $dailyRecord, "{$dailyPage} must lock an existing daily record before reading its feed movement.");
     assertContains('data-feed-item-id=', $dailyRecord, "{$dailyPage} edit controls must retain the linked feed item.");
     assertContains("feedItemId: '#feedItemId'", $dailyRecord, "{$dailyPage} edit modal must prefill the linked feed item.");
@@ -138,6 +141,8 @@ foreach (['poultry/layers_daily_record.php' => 'layer', 'poultry/broiler_daily_r
     );
 }
 $inventoryFunctions = readFileOrFail($root . '/includes/functions.php');
+assertContains('ensureDailyFeedUnitColumns', $inventoryFunctions, 'Existing daily-record tables must be migrated to retain feed units.');
+assertContains('function formatFeedConsumptionTotals', $inventoryFunctions, 'Feed totals must be formatted without adding unlike units.');
 assertContains("transaction_type = 'used'", $inventoryFunctions, 'Daily feed deductions must be recorded as auditable used-stock movements.');
 assertContains("FOR UPDATE", $inventoryFunctions, 'Daily feed deductions must lock stock while validating availability.');
 assertContains('stockTransactionHasDailyFeedLinks', $inventoryFunctions, 'Ledger mutations must be able to identify daily-record-managed movements.');

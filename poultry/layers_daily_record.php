@@ -1,6 +1,8 @@
 <?php require_once(dirname(__DIR__) . '/init.php'); ?>
 <?php
 require_once(__DIR__ . '/../config.php');
+require_once(__DIR__ . '/../includes/functions.php');
+runSchemaMigrations($pdo, ['daily_feed_units']);
 requireLogin();
 
 // Check access
@@ -17,7 +19,7 @@ $selectedCycleId = isset($_GET['cycle_id']) ? (int)$_GET['cycle_id'] : 0;
 $monthSelectorDate = date('Y-m-d', strtotime($yearMonth . '-' . min((int)date('d'), (int)date('t', strtotime($yearMonth . '-01')))));
 
 $tenantFarmId = requireCurrentFarmId();
-$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit, is_active FROM stock_items WHERE farm_id = ? AND feed_category = 'layer' AND LOWER(TRIM(unit)) IN ('bag', 'bags') AND (is_active = 1 OR id IN (SELECT feed_item_id FROM layer_daily_records WHERE farm_id = ? AND feed_stock_transaction_id IS NOT NULL)) ORDER BY is_active DESC, item_name");
+$feedItemsStmt = $pdo->prepare("SELECT id, item_name, current_stock, unit, is_active FROM stock_items WHERE farm_id = ? AND feed_category = 'layer' AND (is_active = 1 OR id IN (SELECT feed_item_id FROM layer_daily_records WHERE farm_id = ? AND feed_stock_transaction_id IS NOT NULL)) ORDER BY is_active DESC, item_name");
 $feedItemsStmt->execute([$tenantFarmId, $tenantFarmId]);
 $feedItems = $feedItemsStmt->fetchAll(PDO::FETCH_ASSOC);
 $cycleEnabled = ($pdo->query("SHOW TABLES LIKE 'production_cycles'")->rowCount() > 0);
@@ -40,6 +42,7 @@ $query .= " ORDER BY record_date";
 $stmt = $pdo->prepare($query);
 $stmt->execute($params);
 $records = $stmt->fetchAll();
+$monthlyFeedDisplay = formatFeedConsumptionTotals($records, 'feed_consumption_bags', 'bags');
 
 // Get latest closing stock from layer mortality table
 $layerClosingStock = null;
@@ -88,7 +91,6 @@ $monthlyTotals = [
 $recordCount = 0;
 foreach ($records as $record) {
     $monthlyTotals['mortality'] += $record['mortality'];
-    $monthlyTotals['feed_consumption'] += $record['feed_consumption_bags'];
     $monthlyTotals['water_consumption'] += $record['water_consumption_liters'];
     $monthlyTotals['egg_production'] += $record['egg_production'];
     $monthlyTotals['crates_count'] += $record['crates_count'];
@@ -124,7 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
             throw new RuntimeException('Daily records cannot be dated in the future.');
         }
         $pdo->beginTransaction();
-        $checkSql = "SELECT id, feed_item_id, feed_consumption_bags, feed_stock_transaction_id FROM layer_daily_records WHERE farm_id = ?";
+        $checkSql = "SELECT id, feed_item_id, feed_consumption_bags, feed_consumption_unit, feed_stock_transaction_id FROM layer_daily_records WHERE farm_id = ?";
         $checkParams = [$tenantFarmId];
         if ($recordId > 0) {
             $checkSql .= " AND id = ?";
@@ -144,18 +146,26 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
 
         $movementId = ($existingRecord && !$existingRecord['feed_stock_transaction_id'] && !$existingRecord['feed_item_id'] && (float)$existingRecord['feed_consumption_bags'] === $feedQuantity && $feedItemId === 0)
             ? null
-            : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'layer', 'bags', $_SESSION['user_id'] ?? null);
+            : syncDailyFeedConsumption($pdo, $tenantFarmId, $existingRecord ? (int)$existingRecord['feed_stock_transaction_id'] : null, $feedItemId, $feedQuantity, $recordDate, 'layer', '', $_SESSION['user_id'] ?? null);
         $linkedFeedItemId = $movementId ? $feedItemId : null;
+        $feedUnit = 'bags';
+        if ($movementId) {
+            $feedUnitStmt = $pdo->prepare('SELECT unit FROM stock_items WHERE id = ? AND farm_id = ?');
+            $feedUnitStmt->execute([$feedItemId, $tenantFarmId]);
+            $feedUnit = trim((string)$feedUnitStmt->fetchColumn()) ?: 'bags';
+        } elseif ($existingRecord && !empty($existingRecord['feed_consumption_unit'])) {
+            $feedUnit = $existingRecord['feed_consumption_unit'];
+        }
         if ($existingRecord) {
-            $stmt = $pdo->prepare("UPDATE layer_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
+            $stmt = $pdo->prepare("UPDATE layer_daily_records SET opening_stock = ?, mortality = ?, feed_consumption_bags = ?, feed_consumption_unit = ?, feed_item_id = ?, feed_stock_transaction_id = ?,
                 water_consumption_liters = ?, medications = ?, egg_production = ?, crates_count = ?, laying_rate = ?, birds_age = ?, remarks = ? WHERE id = ? AND farm_id = ?");
-            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
+            $stmt->execute([$parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedUnit, $linkedFeedItemId, $movementId,
                 $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
                 $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $existingRecord['id'], $tenantFarmId]);
         } else {
-            $stmt = $pdo->prepare("INSERT INTO layer_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, egg_production, crates_count, laying_rate, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt = $pdo->prepare("INSERT INTO layer_daily_records (farm_id, cycle_id, record_date, opening_stock, mortality, feed_consumption_bags, feed_consumption_unit, feed_item_id, feed_stock_transaction_id, water_consumption_liters, medications, egg_production, crates_count, laying_rate, birds_age, remarks, user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
             $stmt->execute([$tenantFarmId, ($cycleEnabled && $selectedCycleId > 0) ? $selectedCycleId : null, $recordDate,
-                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $linkedFeedItemId, $movementId,
+                $parseNumeric($_POST['opening_stock']), $parseNumeric($_POST['mortality']), $feedQuantity, $feedUnit, $linkedFeedItemId, $movementId,
                 $parseNumeric($_POST['water_consumption']), $_POST['medications'], $eggProduction, $calculatedCrates,
                 $parseNumeric($_POST['laying_rate']), $parseNumeric($_POST['birds_age']), $_POST['remarks'], $_SESSION['user_id']]);
         }
@@ -271,8 +281,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                 <div class="card text-white bg-warning">
                                     <div class="card-body text-center">
                                         <h6>Feed Consumption</h6>
-                                        <h3><?php echo number_format($monthlyTotals['feed_consumption'], 2); ?></h3>
-                                        <small>Bags (25kg each)</small>
+                                        <h3><?php echo htmlspecialchars($monthlyFeedDisplay); ?></h3>
+                                        <small>By inventory unit</small>
                                     </div>
                                 </div>
                             </div>
@@ -362,7 +372,6 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 $hasRecord = true;
                                                 $dayOpeningStock += (float)$rec['opening_stock'];
                                                 $dayMortality += (float)$rec['mortality'];
-                                                $dayFeedConsumption += (float)$rec['feed_consumption_bags'];
                                                 if ($rec['mortality'] > 0) {
                                                     $hasMortality = true;
                                                 }
@@ -413,7 +422,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 <div class="d-flex flex-wrap gap-1 justify-content-center mt-1">
                                                     <span class="badge text-bg-primary">O/S: <?php echo number_format($dayOpeningStock, 0); ?></span>
                                                     <span class="badge text-bg-danger">Mort: <?php echo number_format($dayMortality, 0); ?></span>
-                                                    <span class="badge text-bg-success">Feed: <?php echo number_format($dayFeedConsumption, 1); ?></span>
+                                                    <span class="badge text-bg-success">Feed: <?php echo htmlspecialchars(formatFeedConsumptionTotals($dayRecords, 'feed_consumption_bags', 'bags')); ?></span>
                                                 </div>
                                                 <?php endif; ?>
                                                 <?php else: ?>
@@ -441,7 +450,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 <th>Date</th>
                                                 <th>Opening Stock</th>
                                                 <th>Mortality</th>
-                                                <th>Feed (bags)</th>
+                                                <th>Feed (unit)</th>
                                                 <th>Water (L)</th>
                                                 <th>Medications</th>
                                                 <th>Egg Production</th>
@@ -475,7 +484,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                             Closing: <?php echo $closingStock; ?>
                                                         </small>
                                                     </td>
-                                                    <td><?php echo $record['feed_consumption_bags']; ?></td>
+                                                    <td><?php echo htmlspecialchars(number_format((float)$record['feed_consumption_bags'], 2) . ' ' . ($record['feed_consumption_unit'] ?: 'bags')); ?></td>
                                                     <td><?php echo number_format($record['water_consumption_liters']); ?></td>
                                                     <td>
                                                         <?php if ($record['medications']): ?>
@@ -542,7 +551,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                                 <td><strong>TOTAL</strong></td>
                                                 <td>--</td>
                                                 <td class="text-danger fw-bold"><?php echo $monthlyTotals['mortality']; ?></td>
-                                                <td class="fw-bold"><?php echo number_format($monthlyTotals['feed_consumption'], 2); ?></td>
+                                                <td class="fw-bold"><?php echo htmlspecialchars($monthlyFeedDisplay); ?></td>
                                                 <td class="fw-bold"><?php echo number_format($monthlyTotals['water_consumption']); ?></td>
                                                 <td>--</td>
                                                 <td class="text-success fw-bold"><?php echo $monthlyTotals['egg_production']; ?></td>
@@ -623,7 +632,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['save_record'])) {
                                         <option value="<?php echo (int)$feedItem['id']; ?>"><?php echo htmlspecialchars($feedItem['item_name']); ?> — <?php echo htmlspecialchars($feedItem['current_stock']); ?> <?php echo htmlspecialchars($feedItem['unit']); ?> available<?php echo !(int)$feedItem['is_active'] ? ' (inactive; linked records only)' : ''; ?></option>
                                     <?php endforeach; ?>
                                 </select>
-                                <label>Feed Consumption (bags)</label>
+                                <label>Feed Consumption (in the selected item's unit)</label>
                                 <input type="number" name="feed_consumption" class="form-control"
                                        id="feedConsumption" oninput="document.getElementById('feedItemId').required = parseFloat(this.value) > 0" step="0.01" min="0" required>
                             </div>
